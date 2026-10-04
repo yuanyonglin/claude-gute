@@ -2,7 +2,10 @@
 setlocal
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-guard.ps1"
 if errorlevel 1 exit /b 1
-"C:\Program Files\nodejs\node.exe" "%~dp0gate-control.cjs" check
+set "NODE=C:\Program Files\nodejs\node.exe"
+if not exist "%NODE%" for %%I in (node.exe) do set "NODE=%%~$PATH:I"
+if not defined NODE (echo node.exe not found. Install Node.js or add it to PATH. & exit /b 1)
+"%NODE%" "%~dp0gate-control.cjs" check
 if errorlevel 1 (
   echo Claude blocked. Inspect status; run gate-control.cjs resume only after checking the cause.
   exit /b 1

@@ -140,6 +140,11 @@ public sealed class Tray : Form {
         NetworkChange.NetworkAddressChanged+=AddressChanged;
         timer=new System.Threading.Timer(_=>Poll(),null,1000,1000);
     }
+    // Default install first, then PATH; fail loudly instead of guessing.
+    static string NodeExe {get{
+        string d=@"C:\Program Files\nodejs\node.exe";if(File.Exists(d))return d;
+        foreach(var p in (Environment.GetEnvironmentVariable("PATH")??"").Split(';')){try{var f=Path.Combine(p.Trim().Trim('"'),"node.exe");if(p.Trim()!=""&&File.Exists(f))return f;}catch(ArgumentException){}}
+        throw new Exception("找不到 node.exe：请安装 Node.js 或把它加入 PATH");}}
     string IncidentFile {get{return Path.Combine(runtime,"tray-incident.json");}}
     int staleSeconds=30;
     void ReadPolicy(){var f=Path.Combine(dir,"guard-policy.json");if(File.Exists(f)){var p=json.Deserialize<Dictionary<string,object>>(File.ReadAllText(f));nodeLabel=Convert.ToString(p["label"]);expectedIp=Convert.ToString(p["expectedIp"]);
@@ -147,7 +152,7 @@ public sealed class Tray : Form {
         staleSeconds=(interval+3*(timeout+1000)+5000)/1000;}}
     async Task<Dictionary<string,object>> NodeCommand(string action,object request){
         string input=json.Serialize(request);
-        string output=await Task.Run(()=>{using(var p=new Process{StartInfo=new ProcessStartInfo("C:\\Program Files\\nodejs\\node.exe","\""+Path.Combine(dir,"node-selection.cjs")+"\" "+action){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=System.Text.Encoding.UTF8,StandardErrorEncoding=System.Text.Encoding.UTF8}}){
+        string output=await Task.Run(()=>{using(var p=new Process{StartInfo=new ProcessStartInfo(NodeExe,"\""+Path.Combine(dir,"node-selection.cjs")+"\" "+action){UseShellExecute=false,CreateNoWindow=true,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true,StandardOutputEncoding=System.Text.Encoding.UTF8,StandardErrorEncoding=System.Text.Encoding.UTF8}}){
             p.Start();using(var writer=new StreamWriter(p.StandardInput.BaseStream,new System.Text.UTF8Encoding(false))){writer.Write(input);}var stdout=p.StandardOutput.ReadToEndAsync();var stderr=p.StandardError.ReadToEndAsync();
             if(!p.WaitForExit(60000)){p.Kill();throw new Exception("节点操作超时，请检查锁定状态和日志；不要手动恢复 Claude。");}Task.WaitAll(stdout,stderr);
             if(String.IsNullOrWhiteSpace(stdout.Result))throw new Exception("节点操作未返回结果");return stdout.Result;
@@ -220,7 +225,7 @@ public sealed class Tray : Form {
         dashboard.Verify.Enabled=false;dashboard.Inspection.Text="正在通过专用代理查询 ipify 和 Cloudflare…";
         var executable=Path.Combine(dir,"guard-inspect.cjs");
         string output=await Task.Run(()=>{
-            using(var p=new Process{StartInfo=new ProcessStartInfo("C:\\Program Files\\nodejs\\node.exe","\""+executable+"\""){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true}}){
+            using(var p=new Process{StartInfo=new ProcessStartInfo(NodeExe,"\""+executable+"\""){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true}}){
                 p.Start();var stdout=p.StandardOutput.ReadToEndAsync();var stderr=p.StandardError.ReadToEndAsync();
                 if(!p.WaitForExit(30000)){p.Kill();throw new Exception("出口验证超时");}Task.WaitAll(stdout,stderr);
                 if(String.IsNullOrWhiteSpace(stdout.Result))throw new Exception(stderr.Result);return stdout.Result;
