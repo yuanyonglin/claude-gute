@@ -217,6 +217,9 @@ public sealed class Tray : Form {
         if(reason=="manual block")return "已暂停，等待复检恢复";
         if(reason=="fixed exit verified")return "固定出口验证通过，正在持续监测";
         if(reason=="dedicated core exited")return "专用代理核心已退出";
+        if(reason=="persisted block or unclean shutdown: explicit resume required")return "门卫重启后保持锁定，需复检恢复";
+        if(reason=="guard stopped")return "门卫已停止";
+        if(reason=="exit IP mismatch or invalid IP from verification services")return "实测出口 IP 与预期不符，已记录到 IP 历史";
         const string nic="configured network interface has no IPv4 address: ";
         if(reason!=null&&reason.StartsWith(nic))return "网卡不可用（"+reason.Substring(nic.Length)+"）：检查网络，或在 guard-policy.json 的 interfaceName 中加入备用网卡后重启门卫";
         return reason;
@@ -251,10 +254,57 @@ public sealed class Tray : Form {
                 else if(kind=="START")rows.Add(new[]{time,"启动","门卫启动"+(field("interface")==""?"":" · 网卡 "+field("interface")),"muted"});
                 else if(kind=="PROBE_RETRY")rows.Add(new[]{time,"重试","探测重试 "+field("attempt")+"/3 · "+field("error"),"muted"});
                 else if(kind=="FATAL")rows.Add(new[]{time,"故障",field("reason"),"bad"});
+                else if(kind=="IP_CHANGE")rows.Add(field("kind")=="baseline"?new[]{time,"记录","开始记录出口 IP "+field("ip"),"muted"}:new[]{time,"换 IP",(field("kind")=="manual"?"主动更换为 ":"非界面更换为 ")+field("ip"),field("kind")=="manual"?"muted":"bad"});
+                else if(kind=="IP_MISMATCH")rows.Add(new[]{time,"IP 异常","实测出口与预期不符","bad"});
+                else if(kind=="IP_WARNING")rows.Add(new[]{time,"警告","出口 IP 变化频繁：24 小时 "+field("day")+" 次 / 7 天 "+field("week")+" 次","bad"});
+                else if(kind=="HISTORY_ERROR")rows.Add(new[]{time,"错误","IP 历史读写失败："+field("error"),"bad"});
                 else rows.Add(new[]{time,kind,"","muted"});
             }
         }
         dashboard.SetEvents(rows,lastConnect);
+        RefreshHistory();
+    }
+    // Same rules as ip-history.cjs: manual, external and mismatch entries count as changes; >=2 in 24h or >=3 in 7 days is frequent.
+    static readonly string[] IpChanges={"manual","external","mismatch"};
+    string lastWarningSeen=null;
+    List<Dictionary<string,object>> ReadHistory(){
+        var entries=new List<Dictionary<string,object>>();var file=Path.Combine(runtime,"ip-history.jsonl");
+        if(!File.Exists(file))return entries;
+        string text;
+        using(var fs=new FileStream(file,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))using(var reader=new StreamReader(fs,System.Text.Encoding.UTF8))text=reader.ReadToEnd();
+        foreach(var line in text.Split('\n')){
+            if(line.Trim()=="")continue;
+            try{entries.Add(json.Deserialize<Dictionary<string,object>>(line));}catch(ArgumentException){} // torn last line; the daemon repairs it on its next write
+        }
+        return entries;
+    }
+    void RefreshHistory(){
+        var entries=ReadHistory();int day=0,week=0;string latestWarning=null;
+        foreach(var e in entries){
+            DateTime at;if(!e.ContainsKey("time")||!DateTime.TryParse(Convert.ToString(e["time"]),out at))continue;
+            string kind=e.ContainsKey("kind")?Convert.ToString(e["kind"]):"";double age=(DateTime.UtcNow-at.ToUniversalTime()).TotalHours;
+            if(IpChanges.Contains(kind)){if(age<24)day++;if(age<24*7)week++;}
+            if(kind=="warning")latestWarning=Convert.ToString(e["time"]);
+        }
+        bool frequent=day>=2||week>=3;
+        dashboard.SetHistory(day,week,frequent);
+        // Notify once per new warning entry; warnings that existed before this tray started are only shown in the window.
+        if(lastWarningSeen!=null&&latestWarning!=null&&latestWarning!=lastWarningSeen)icon.ShowBalloonTip(8000,"出口 IP 变化频繁","近 24 小时 "+day+" 次，近 7 天 "+week+" 次。请在主界面查看 IP 历史，确认是否是你主动更换。",ToolTipIcon.Warning);
+        lastWarningSeen=latestWarning??"";
+    }
+    void ShowHistory(){
+        var rows=new List<string[]>();
+        foreach(var e in ReadHistory().AsEnumerable().Reverse()){
+            Func<string,string> f=k=>e.ContainsKey(k)&&e[k]!=null?Convert.ToString(e[k]):"";
+            DateTime at;string time=DateTime.TryParse(f("time"),out at)?at.ToLocalTime().ToString("yyyy-MM-dd HH:mm"):f("time");string kind=f("kind");
+            if(kind=="baseline")rows.Add(new[]{time,"开始记录",f("label"),f("ip"),"muted"});
+            else if(kind=="manual")rows.Add(new[]{time,"主动更换",f("label"),f("previousIp")+" → "+f("ip"),"muted"});
+            else if(kind=="external")rows.Add(new[]{time,"非界面更换",f("label"),f("previousIp")+" → "+f("ip"),"bad"});
+            else if(kind=="mismatch")rows.Add(new[]{time,"出口异常",f("label"),"预期 "+f("expectedIp")+"，实测 "+string.Join(", ",((System.Collections.IEnumerable)e["observed"]).Cast<object>()),"bad"});
+            else if(kind=="warning")rows.Add(new[]{time,"变化频繁","","24 小时 "+f("day")+" 次 / 7 天 "+f("week")+" 次","bad"});
+            else rows.Add(new[]{time,kind,f("label"),"","muted"});
+        }
+        dashboard.ShowHistory(rows);
     }
     void RefreshDashboard(string phase,string reason){if(dashboard!=null&&!dashboard.IsDisposed){dashboard.SetState(phase,ReasonText(reason),lastVerified,processes.Held.Count,nodeLabel,expectedIp);try{RefreshEvents();}catch(IOException e){Log("读取事件失败："+e.Message);}dashboard.Updating=true;dashboard.Confirm.Checked=settings.mode=="confirm";dashboard.Auto.Checked=settings.mode=="auto";dashboard.Updating=false;}}
     public void OpenDashboard(){
@@ -265,6 +315,7 @@ public sealed class Tray : Form {
             dashboard.Auto.CheckedChanged+=(s,e)=>{if(!dashboard.Updating&&dashboard.Auto.Checked)ChangeMode("auto");};
             dashboard.Verify.Click+=async(s,e)=>await InspectExit();
             dashboard.SelectNode.Click+=(s,e)=>ChooseNode();
+            dashboard.History.Click+=(s,e)=>{try{ShowHistory();}catch(Exception ex){Report(ex);}};
             dashboard.Resume.Click+=async(s,e)=>await Recover();
             dashboard.Alert.Click+=(s,e)=>ShowStatus();
             dashboard.IncidentRecover.Click+=async(s,e)=>await Recover();
@@ -480,10 +531,11 @@ public static class Program {
         view.SetObservations(new List<string[]>{new[]{"ipify","203.0.113.10","一致","ok"},new[]{"Cloudflare","203.0.113.10","一致","ok"}});
         view.Observed.Text="两路一致 · 203.0.113.10";view.Observed.ForeColor=Theme.GoodInk;view.Inspection.Text="16:42:08 实测 · 没有改变锁定状态";
         view.SetEvents(new List<string[]>{new[]{"16:20","正常","固定出口验证通过","good"},new[]{"16:19","恢复","复检通过，手动恢复","good"},new[]{"16:18","锁定","网络地址变化，自动复检未通过","bad"},new[]{"16:02","启动","门卫启动 · 网卡 WLAN","muted"}},"16:42 api.anthropic.com");
+        view.SetHistory(0,1,false);
         Application.DoEvents();shot(image);
         view.SetState("BLOCKED","专用代理连接失败，保护保持锁定",DateTime.UtcNow.AddMinutes(-22).ToString("o"),3,"Example-A","203.0.113.10");
         view.SetObservations(new List<string[]>{new[]{"ipify","probe deadline exceeded","失败","bad"},new[]{"Cloudflare","probe deadline exceeded","失败","bad"}});
-        view.Observed.Text="本次未能获取 IP";view.Observed.ForeColor=Theme.BadInk;
+        view.Observed.Text="本次未能获取 IP";view.Observed.ForeColor=Theme.BadInk;view.SetHistory(2,3,true);
         view.ShowIncident("新启动的 Claude 也会被暂停，终端可能显示空白。「复检并恢复」通过出口验证后才恢复进程；「结束」只关闭进程，不会解锁。\n本轮新冻结 3 个进程；当前冻结 3 个。");
         view.IncidentAction.Text="尚未操作。继续使用请选择「复检并恢复」。";
         view.SetEvents(new List<string[]>{new[]{"16:41","锁定","专用代理连接失败，保护保持锁定","bad"},new[]{"16:41","重试","探测重试 3/3 · probe deadline exceeded","muted"},new[]{"16:20","正常","固定出口验证通过","good"}},"16:40 api.anthropic.com");

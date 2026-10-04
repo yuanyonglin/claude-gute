@@ -7,9 +7,10 @@ using System.Windows.Forms;
 // Main window: status banner (actions follow the state), exit check, recent events, launch bar.
 // The window never resizes itself; the incident section expands inside the banner.
 public sealed class Dashboard : Form {
-    public readonly Label StateTitle,StateDetail,Node,Expected,Observed,LastCheck,Processes,Inspection,Mode,LastConnect;
+    public readonly Label StateTitle,StateDetail,Node,Expected,Observed,LastCheck,Processes,Inspection,Mode,LastConnect,HistorySummary;
+    public readonly Chip IpWarning;
     public readonly RadioButton Confirm,Auto;
-    public readonly FlatBtn Verify,Resume,Alert,Logs,Code,Desktop,SelectNode,Settings;
+    public readonly FlatBtn Verify,Resume,Alert,Logs,Code,Desktop,SelectNode,Settings,History;
     public readonly TableLayoutPanel Incident;
     public readonly Label IncidentText,IncidentAction;
     public readonly FlatBtn IncidentRecover,IncidentEnd,IncidentDismiss;
@@ -26,7 +27,7 @@ public sealed class Dashboard : Form {
         AutoScaleDimensions=new SizeF(96F,96F);AutoScaleMode=AutoScaleMode.Dpi;
         Text="Claude Guard";Icon=icon;StartPosition=FormStartPosition.CenterScreen;
         Font=Theme.Font(10f);ForeColor=Theme.Ink;BackColor=Theme.Ground;
-        ClientSize=new Size(640,760);MinimumSize=SizeFromClientSize(new Size(600,700));
+        ClientSize=new Size(690,760);MinimumSize=SizeFromClientSize(new Size(600,700));
 
         root=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=1,Padding=new Padding(20,14,20,16)};
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
@@ -52,7 +53,8 @@ public sealed class Dashboard : Form {
         banner.Controls.Add(top);
         var chips=new FlowLayoutPanel{AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,WrapContents=true,Margin=new Padding(54,12,0,0),Dock=DockStyle.Fill};
         Processes=new Chip{Text="无冻结进程"};LastCheck=new Chip{Text="尚无通过记录"};Mode=new Chip{Text="异常时先冻结"};
-        chips.Controls.AddRange(new Control[]{Processes,LastCheck,Mode});banner.Controls.Add(chips);
+        IpWarning=new Chip{Text="IP 变化频繁",ForeColor=Theme.BadInk,Visible=false,Font=Theme.Font(9.5f,FontStyle.Bold)};
+        chips.Controls.AddRange(new Control[]{IpWarning,Processes,LastCheck,Mode});banner.Controls.Add(chips);
         Incident=Stack();Incident.Visible=false;Incident.Margin=new Padding(54,14,0,0);
         IncidentText=Wrap(Theme.Text("",9.5f,Theme.Body));
         IncidentAction=Wrap(Theme.Text("",9.5f,Theme.BadInk,FontStyle.Bold));IncidentAction.Margin=new Padding(0,6,0,0);
@@ -86,6 +88,10 @@ public sealed class Dashboard : Form {
         checkText.Controls.Add(Observed);checkText.Controls.Add(Inspection);checkRow.Controls.Add(checkText,0,0);
         Verify=new FlatBtn("重新验证",ButtonKind.Secondary,Theme.Ink){Height=34,Margin=new Padding(10,0,0,0),Anchor=AnchorStyles.Right};checkRow.Controls.Add(Verify,1,0);
         exit.Controls.Add(checkRow);
+        var historyRow=Row(2);historyRow.Margin=new Padding(0,6,0,0);
+        HistorySummary=Anchored(Theme.Text("IP 变化：暂无记录",9f,Theme.Muted),AnchorStyles.Left);historyRow.Controls.Add(HistorySummary,0,0);
+        History=new FlatBtn("IP 历史",ButtonKind.Link,Theme.Link){Anchor=AnchorStyles.Right,Margin=new Padding(0)};historyRow.Controls.Add(History,1,0);
+        exit.Controls.Add(historyRow);
         root.Controls.Add(exit,0,2);
         SetObservations(new List<string[]>());
 
@@ -192,6 +198,23 @@ public sealed class Dashboard : Form {
         // Trailing filler row: otherwise the table stretches the last event row to its full height.
         events.RowStyles.Add(new RowStyle(SizeType.Percent,100));events.RowCount=rows.Count+1;
         events.ResumeLayout();
+    }
+    public void SetHistory(int day,int week,bool frequent){
+        HistorySummary.Text="IP 变化：近 24 小时 "+day+" 次 · 近 7 天 "+week+" 次"+(frequent?"（频繁）":"");
+        HistorySummary.ForeColor=frequent?Theme.BadInk:Theme.Muted;HistorySummary.Font=Theme.Font(9f,frequent?FontStyle.Bold:FontStyle.Regular);
+        IpWarning.Visible=frequent;
+    }
+    // rows: {time, type, node, detail, "bad"|"muted"}; newest first.
+    public void ShowHistory(IList<string[]> rows){
+        using(var f=new Form{Text="出口 IP 历史",StartPosition=FormStartPosition.CenterParent,ShowInTaskbar=false,MinimizeBox=false,BackColor=Theme.Ground,Font=Theme.Font(9.5f),
+            AutoScaleDimensions=new SizeF(96F,96F),AutoScaleMode=AutoScaleMode.Dpi,ClientSize=new Size(720,460),Icon=Icon}){
+            var list=new ListView{Dock=DockStyle.Fill,View=View.Details,FullRowSelect=true,HeaderStyle=ColumnHeaderStyle.Nonclickable,BorderStyle=BorderStyle.None};
+            list.Columns.Add("时间",130);list.Columns.Add("类型",100);list.Columns.Add("节点",160);list.Columns.Add("IP / 说明",300);
+            foreach(var r in rows){var item=new ListViewItem(new[]{r[0],r[1],r[2],r[3]});if(r[4]=="bad")item.ForeColor=Theme.BadInk;list.Items.Add(item);}
+            if(rows.Count==0)list.Items.Add(new ListViewItem(new[]{"","暂无记录","",""}));
+            var note=Theme.Text("红色为非主动变化：节点出口变了、配置被界面以外的方式修改，或实测 IP 与预期不符。",9f,Theme.Muted);note.Dock=DockStyle.Bottom;note.Padding=new Padding(10,8,10,8);note.AutoSize=false;note.Height=34;
+            f.Controls.Add(list);f.Controls.Add(note);f.ShowDialog(this);
+        }
     }
     public void ShowIncident(string text){
         IncidentText.Text=text;if(IncidentVisible)return;
