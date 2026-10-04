@@ -8,10 +8,13 @@ using System.Windows.Forms;
 public sealed class NodePicker : Form {
     readonly Func<string,object,Task<Dictionary<string,object>>> command;
     readonly Func<string,Task<Dictionary<string,object>>> save;
-    readonly ComboBox nodes=new ComboBox{DropDownStyle=ComboBoxStyle.DropDownList};
-    readonly TextBox source=new TextBox{ReadOnly=true};
-    readonly Label details=new Label(),result=new Label();
-    readonly Button refresh=new Button{Text="读取当前 Clash"},browse=new Button{Text="选择 YAML…"},test=new Button{Text="测试所选节点"},apply=new Button{Text="保存为固定节点",Enabled=false};
+    readonly ListBox nodes=new ListBox{DrawMode=DrawMode.OwnerDrawFixed,ItemHeight=54,BorderStyle=BorderStyle.None,Dock=DockStyle.Fill,IntegralHeight=false,Margin=new Padding(0)};
+    readonly TextBox source=new TextBox{ReadOnly=true,BorderStyle=BorderStyle.FixedSingle,BackColor=Theme.Surface,Dock=DockStyle.Fill,Margin=new Padding(0,4,10,0)};
+    readonly Label details=Theme.Text("",9f,Theme.Muted),result=Theme.Text("",9.5f,Theme.Body);
+    readonly Button refresh=new FlatBtn("读取当前 Clash",ButtonKind.Secondary,Theme.Ink){Height=34},browse=new FlatBtn("选择文件…",ButtonKind.Secondary,Theme.Ink){Height=34,Margin=new Padding(0)},
+        test=new FlatBtn("测试所选节点",ButtonKind.Secondary,Theme.Ink),apply=new FlatBtn("保存为固定节点",ButtonKind.Primary,Theme.Link){Enabled=false};
+    readonly string current;
+    static readonly Font NameFont=Theme.Font(10f,FontStyle.Bold),MetaFont=new Font(Theme.Mono,9f),NoteFont=Theme.Font(9f);
     string file="",digest="",token="";bool busy,loaded;
     Func<string,string,MessageBoxIcon,bool> ask;
     public bool Applied;
@@ -22,20 +25,50 @@ public sealed class NodePicker : Form {
     public NodePicker(Icon icon,string current,Func<string,object,Task<Dictionary<string,object>>> invoke,Func<string,Task<Dictionary<string,object>>> commit){
         command=invoke;save=commit;Text="选择 Claude 固定节点";Icon=icon;StartPosition=FormStartPosition.CenterParent;
         ask=(text,caption,iconType)=>MessageBox.Show(this,text,caption,MessageBoxButtons.YesNo,iconType)==DialogResult.Yes;
-        ClientSize=new Size(720,450);MinimumSize=MaximumSize=Size;Font=new Font("Microsoft YaHei UI",10);BackColor=Color.FromArgb(244,246,248);
-        var title=new Label{Text="固定出口独立于主 Clash 的临时选择",Font=new Font(Font,FontStyle.Bold),Bounds=new Rectangle(22,20,675,28)};
-        var currentLabel=new Label{Text="当前固定："+current,Bounds=new Rectangle(22,53,675,26)};
-        source.SetBounds(22,91,445,28);refresh.SetBounds(478,89,112,32);browse.SetBounds(597,89,102,32);
-        nodes.SetBounds(22,139,676,32);details.SetBounds(22,181,676,48);result.SetBounds(22,245,676,109);
-        result.Text="请选择节点，再测试。测试不会改变主 Clash 或 Claude 固定配置。\n节点名字不是地理证明；测试会显示两路实际 IP 和 Cloudflare 国家码。";
-        test.SetBounds(22,378,170,40);apply.SetBounds(208,378,190,40);
-        var cancel=new Button{Text="关闭",Bounds=new Rectangle(588,378,110,40)};cancel.Click+=(s,e)=>Close();
-        Controls.AddRange(new Control[]{title,currentLabel,source,refresh,browse,nodes,details,result,test,apply,cancel});
+        this.current=current;
+        AutoScaleDimensions=new SizeF(96F,96F);AutoScaleMode=AutoScaleMode.Dpi;
+        ClientSize=new Size(580,660);MinimumSize=SizeFromClientSize(new Size(520,600));Font=Theme.Font(10f);ForeColor=Theme.Ink;BackColor=Theme.Ground;
+        var root=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=1,Padding=new Padding(20,16,20,16)};
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        foreach(var h in new[]{SizeType.AutoSize,SizeType.AutoSize,SizeType.AutoSize,SizeType.Percent,SizeType.AutoSize,SizeType.AutoSize,SizeType.AutoSize})root.RowStyles.Add(new RowStyle(h,100));
+        root.Controls.Add(Theme.Text("更换固定节点",13f,Theme.Ink,FontStyle.Bold),0,0);
+        var currentLabel=Theme.Text("当前："+current+"。测试在隔离核心中进行，不改变主 Clash。",9.5f,Theme.Muted);currentLabel.Margin=new Padding(0,4,0,12);root.Controls.Add(currentLabel,0,1);
+        var sourceRow=new TableLayoutPanel{AutoSize=true,ColumnCount=3,Dock=DockStyle.Fill,Margin=new Padding(0,0,0,12)};
+        sourceRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));sourceRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));sourceRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        sourceRow.Controls.Add(source,0,0);sourceRow.Controls.Add(refresh,1,0);sourceRow.Controls.Add(browse,2,0);root.Controls.Add(sourceRow,0,2);
+        var list=new RoundPanel{Fill=Theme.Surface,Stroke=Theme.Border,AutoSize=false,Padding=new Padding(1,6,1,6),Margin=new Padding(0,0,0,8)};
+        list.Controls.Add(nodes);root.Controls.Add(list,0,3);
+        details.Margin=new Padding(2,0,0,10);root.Controls.Add(details,0,4);
+        var resultCard=new RoundPanel{Fill=Theme.LinkTint,Padding=new Padding(16,12,16,12)};resultCard.Controls.Add(result);root.Controls.Add(resultCard,0,5);
+        result.Text="请选择节点，再测试。节点名字不是地理证明；测试会显示两路实际 IP 和 Cloudflare 国家码。";
+        var footer=new TableLayoutPanel{AutoSize=true,ColumnCount=4,Dock=DockStyle.Fill,Margin=new Padding(0)};
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var cancel=new FlatBtn("关闭",ButtonKind.Link,Theme.Link){Height=42,Margin=new Padding(0)};cancel.Click+=(s,e)=>Close();
+        footer.Controls.Add(test,0,0);footer.Controls.Add(apply,1,0);footer.Controls.Add(cancel,3,0);root.Controls.Add(footer,0,6);
+        Controls.Add(root);
+        Resize+=(s,e)=>{result.MaximumSize=details.MaximumSize=new Size(Math.Max(200,root.ClientSize.Width-root.Padding.Horizontal-40),0);};
+        nodes.DrawItem+=DrawNode;
         refresh.Click+=async(s,e)=>await LoadNodes("");
         browse.Click+=async(s,e)=>{using(var d=new OpenFileDialog{Filter="Clash YAML|*.yaml;*.yml",CheckFileExists=true})if(d.ShowDialog(this)==DialogResult.OK)await LoadNodes(d.FileName);};
         nodes.SelectedIndexChanged+=(s,e)=>{token="";apply.Enabled=false;var n=nodes.SelectedItem as Item;details.Text=n==null?"":n.server+":"+n.port+"  ·  "+n.type+(n.supported?"":"\n"+n.reason);result.Text="选择尚未保存。请测试后核对出口，再确认保存。";test.Enabled=!busy&&n!=null&&n.supported;};
         test.Click+=async(s,e)=>await TestNode();apply.Click+=async(s,e)=>await ApplyNode();Shown+=async(s,e)=>await LoadNodes("");
         FormClosing+=(s,e)=>{if(busy){e.Cancel=true;MessageBox.Show(this,"操作仍在进行，请等结果返回。","请稍候");}};
+    }
+    // Row: radio mark, name, server and protocol, and a note for the current or unsupported node.
+    void DrawNode(object sender,DrawItemEventArgs e){
+        if(e.Index<0)return;var n=(Item)nodes.Items[e.Index];var g=e.Graphics;
+        bool on=(e.State&DrawItemState.Selected)!=0;var r=e.Bounds;
+        using(var b=new SolidBrush(on?Color.FromArgb(242,246,252):Theme.Surface))g.FillRectangle(b,r);
+        if(e.Index<nodes.Items.Count-1)using(var pen=new Pen(Theme.Divider))g.DrawLine(pen,r.Left+16,r.Bottom-1,r.Right-16,r.Bottom-1);
+        float k=g.DpiX/96f;int x=r.Left+(int)(16*k),cy=r.Top+r.Height/2,d=(int)(16*k);
+        g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        using(var pen=new Pen(on?Theme.Link:Color.FromArgb(183,190,200),on?5*k:1.5f*k)){float inset=on?2.5f*k:0.75f*k;g.DrawEllipse(pen,x+inset,cy-d/2+inset,d-2*inset,d-2*inset);}
+        int tx=x+d+(int)(12*k);string note=n.name==current?"当前":n.supported?"":"暂不支持";
+        var noteSize=TextRenderer.MeasureText(note,NoteFont);
+        var textRect=new Rectangle(tx,r.Top+(int)(7*k),r.Right-tx-noteSize.Width-(int)(24*k),r.Height/2);
+        TextRenderer.DrawText(g,n.name,NameFont,textRect,n.supported?Theme.Ink:Theme.Disabled,TextFormatFlags.Left|TextFormatFlags.EndEllipsis|TextFormatFlags.NoPrefix);
+        TextRenderer.DrawText(g,n.server+":"+n.port+" · "+n.type,MetaFont,new Rectangle(tx,cy+(int)(1*k),textRect.Width,r.Height/2-(int)(4*k)),Theme.Muted,TextFormatFlags.Left|TextFormatFlags.EndEllipsis|TextFormatFlags.NoPrefix);
+        if(note!="")TextRenderer.DrawText(g,note,NoteFont,new Rectangle(r.Right-noteSize.Width-(int)(16*k),r.Top,noteSize.Width,r.Height),Theme.Muted,TextFormatFlags.VerticalCenter|TextFormatFlags.Left);
     }
     void Busy(bool value){busy=value;refresh.Enabled=browse.Enabled=nodes.Enabled=!value;var n=nodes.SelectedItem as Item;test.Enabled=!value&&n!=null&&n.supported;apply.Enabled=!value&&token!="";}
     async Task LoadNodes(string selectedFile){
@@ -61,6 +94,7 @@ public sealed class NodePicker : Form {
         catch(Exception e){token="";result.Text="保存未完成："+e.Message;}
         finally{Busy(false);}
     }
+    public void SelectForPreview(int index){nodes.SelectedIndex=index;}
     public async Task TestWorkflow(string image){
         for(int i=0;i<200&&!loaded;i++)await Task.Delay(50);
         if(!loaded)throw new Exception("Node catalog load did not complete");

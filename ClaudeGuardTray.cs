@@ -221,7 +221,40 @@ public sealed class Tray : Form {
         if(reason!=null&&reason.StartsWith(nic))return "网卡不可用（"+reason.Substring(nic.Length)+"）：检查网络，或在 guard-policy.json 的 interfaceName 中加入备用网卡后重启门卫";
         return reason;
     }
-    void RefreshDashboard(string phase,string reason){if(dashboard!=null&&!dashboard.IsDisposed){dashboard.SetState(phase,ReasonText(reason),lastVerified,processes.Held.Count,nodeLabel,expectedIp);dashboard.Updating=true;dashboard.Confirm.Checked=settings.mode=="confirm";dashboard.Auto.Checked=settings.mode=="auto";dashboard.Updating=false;}}
+    DateTime eventsRead=DateTime.MinValue;
+    void RefreshEvents(){
+        if(dashboard==null||dashboard.IsDisposed||!dashboard.Visible||(DateTime.UtcNow-eventsRead).TotalSeconds<3)return;
+        eventsRead=DateTime.UtcNow;
+        var rows=new List<string[]>();string lastConnect=null;var file=Path.Combine(runtime,"events.jsonl");
+        if(File.Exists(file)){
+            string tail;
+            // Share write and delete: the daemon appends and rotates this file, and a failed log write there blocks the guard.
+            using(var fs=new FileStream(file,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete)){
+                long start=Math.Max(0,fs.Length-32768);fs.Seek(start,SeekOrigin.Begin);
+                using(var reader=new StreamReader(fs,System.Text.Encoding.UTF8))tail=reader.ReadToEnd();
+                if(start>0){int nl=tail.IndexOf('\n');tail=nl<0?"":tail.Substring(nl+1);}
+            }
+            foreach(var line in tail.Split('\n').Reverse()){
+                if(rows.Count>=6)break;if(line.Trim()=="")continue;
+                Dictionary<string,object> e;
+                try{e=json.Deserialize<Dictionary<string,object>>(line);}catch(ArgumentException){continue;} // a line still being appended
+                DateTime at;if(e==null||!e.ContainsKey("event")||!e.ContainsKey("time")||!DateTime.TryParse(Convert.ToString(e["time"]),out at))continue;
+                string time=at.ToLocalTime().ToString("HH:mm"),kind=Convert.ToString(e["event"]);
+                Func<string,string> field=k=>e.ContainsKey(k)?Convert.ToString(e[k]):"";
+                if(kind=="CONNECT"){if(lastConnect==null)lastConnect=time+" "+field("authority");continue;}
+                if(kind=="BLOCKED")rows.Add(new[]{time,"锁定",ReasonText(field("reason")),"bad"});
+                else if(kind=="READY")rows.Add(new[]{time,"正常","固定出口验证通过","good"});
+                else if(kind=="MANUAL_RESUME")rows.Add(new[]{time,"恢复","复检通过，手动恢复","good"});
+                else if(kind=="STARTING")rows.Add(new[]{time,"验证","正在验证出口","muted"});
+                else if(kind=="START")rows.Add(new[]{time,"启动","门卫启动"+(field("interface")==""?"":" · 网卡 "+field("interface")),"muted"});
+                else if(kind=="PROBE_RETRY")rows.Add(new[]{time,"重试","探测重试 "+field("attempt")+"/3 · "+field("error"),"muted"});
+                else if(kind=="FATAL")rows.Add(new[]{time,"故障",field("reason"),"bad"});
+                else rows.Add(new[]{time,kind,"","muted"});
+            }
+        }
+        dashboard.SetEvents(rows,lastConnect);
+    }
+    void RefreshDashboard(string phase,string reason){if(dashboard!=null&&!dashboard.IsDisposed){dashboard.SetState(phase,ReasonText(reason),lastVerified,processes.Held.Count,nodeLabel,expectedIp);try{RefreshEvents();}catch(IOException e){Log("读取事件失败："+e.Message);}dashboard.Updating=true;dashboard.Confirm.Checked=settings.mode=="confirm";dashboard.Auto.Checked=settings.mode=="auto";dashboard.Updating=false;}}
     public void OpenDashboard(){
         bool firstOpen=dashboard==null||dashboard.IsDisposed;
         if(dashboard==null||dashboard.IsDisposed){
@@ -255,13 +288,15 @@ public sealed class Tray : Form {
         }).ContinueWith(t=>{if(t.IsFaulted)return "ERROR: "+t.Exception.GetBaseException().Message;return t.Result;});
         try{
             if(output.StartsWith("ERROR:"))throw new Exception(output);
-            var r=json.Deserialize<Dictionary<string,object>>(output);var rows=(System.Collections.IEnumerable)r["observations"];var text=new List<string>();var ips=new List<string>();
-            foreach(Dictionary<string,object> row in rows){var ip=Convert.ToString(row["ip"]);if(ip!="")ips.Add(ip);text.Add(Convert.ToString(row["source"])+"："+(ip!=""?ip+"  "+(Convert.ToBoolean(row["match"])?"匹配":"不匹配"):"失败 · "+Convert.ToString(row["error"])));}
-            bool ok=Convert.ToBoolean(r["ok"]);dashboard.Observed.Text=ok?ips.FirstOrDefault():ips.Count>0?"检测不匹配 / 未全部通过":"本次未能获取 IP";
-            dashboard.Observed.ForeColor=ok?Color.FromArgb(31,102,87):Color.FromArgb(150,88,41);
-            dashboard.Inspection.Text=String.Join("\n",text)+"\n"+DateTime.Parse(Convert.ToString(r["checkedAt"])).ToLocalTime().ToString("HH:mm:ss")+" · "+(ok?"两路匹配。此操作没有解除故障锁定。":"未通过。保护状态保持不变。");
+            var r=json.Deserialize<Dictionary<string,object>>(output);var rows=(System.Collections.IEnumerable)r["observations"];var table=new List<string[]>();var ips=new List<string>();
+            foreach(Dictionary<string,object> row in rows){var ip=Convert.ToString(row["ip"]);bool match=Convert.ToBoolean(row["match"]);if(ip!="")ips.Add(ip);
+                table.Add(new[]{Convert.ToString(row["source"]),ip!=""?ip:Convert.ToString(row["error"]),ip==""?"失败":match?"一致":"不一致",match?"ok":"bad"});}
+            bool ok=Convert.ToBoolean(r["ok"]);dashboard.SetObservations(table);
+            dashboard.Observed.Text=ok?"两路一致 · "+ips.FirstOrDefault():ips.Count>0?"检测不匹配 / 未全部通过":"本次未能获取 IP";
+            dashboard.Observed.ForeColor=ok?Theme.GoodInk:Theme.BadInk;
+            dashboard.Inspection.Text=DateTime.Parse(Convert.ToString(r["checkedAt"])).ToLocalTime().ToString("HH:mm:ss")+" 实测 · "+(ok?"没有改变锁定状态":"保护状态保持不变");
             Log("UI_VERIFY "+output.Trim());
-        }catch(Exception e){dashboard.Observed.Text="检测失败";dashboard.Inspection.Text=e.Message;}
+        }catch(Exception e){dashboard.Observed.Text="检测失败";dashboard.Observed.ForeColor=Theme.BadInk;dashboard.Inspection.Text=e.Message;}
         finally{dashboard.Verify.Enabled=true;dashboard.SelectNode.Enabled=!choosingNode;}
     }
     void Launch(bool desktop){
@@ -337,7 +372,7 @@ public sealed class Tray : Form {
             RefreshDashboard("BLOCKED",incident==null?status:incident.reason);if(dashboard!=null&&!dashboard.IsDisposed)dashboard.IncidentText.Text=AlertText();
         }catch(Exception ex){ActionResult("结束未完成："+ex.Message);Report(ex);}finally{serial.Release();if(dashboard!=null&&!dashboard.IsDisposed)dashboard.IncidentEnd.Enabled=true;}
     }
-    string AlertText(){return "原因："+ReasonText(incident==null?status:incident.reason)+"\n固定节点："+nodeLabel+"  ·  "+expectedIp+"\n\n当前冻结 "+processes.Held.Count+" 个进程。新启动的 Claude 也会暂停，所以终端可能空白。\n模式："+(settings.mode=="auto"?"自动结束":"先冻结，用户确认后才结束")+"\n"+result+"\n\n「结束」会关闭进程，不会解锁；「关闭提示」只隐藏此窗口。\n「复检并恢复」通过固定出口验证后才恢复被冻结进程。";}
+    string AlertText(){return "新启动的 Claude 也会被暂停，终端可能显示空白。「复检并恢复」通过出口验证后才恢复进程；「结束」只关闭进程，不会解锁。"+(result==""?"":"\n"+result);}
     void ShowStatus(){if(incident!=null){shownIncident=false;ShowIncident();}else MessageBox.Show(status+"\n模式："+settings.mode+"\n"+lastError,"Claude 网络保护");}
     void UpdateMode(){confirm.Checked=settings.mode=="confirm";automatic.Checked=settings.mode=="auto";RefreshDashboard(incident!=null?"BLOCKED":armed?"READY":"STARTING",incident!=null?incident.reason:status);}
     async void ChangeMode(string mode) {
@@ -422,7 +457,7 @@ public static class Program {
     [STAThread] public static void Main(string[] args) {
         string dir=AppDomain.CurrentDomain.BaseDirectory;
         if(args.Length>0&&args[0]=="--recovery-test") {Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);var tray=new Tray(dir);tray.Shown+=async(s,e)=>await tray.TestRecovery(args[1]);Application.Run(tray);return;}
-        if(args.Length>0&&args[0]=="--ui-preview") {Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);var view=new Dashboard(Icon.ExtractAssociatedIcon(Application.ExecutablePath));view.SetState("BLOCKED","专用代理连接失败，保护保持锁定","",3,"Amsterdam · 阿姆斯特丹","203.0.113.10");view.Show();view.Refresh();using(var image=new Bitmap(view.Width,view.Height)){view.DrawToBitmap(image,new Rectangle(0,0,view.Width,view.Height));image.Save(args[1],System.Drawing.Imaging.ImageFormat.Png);}view.Dispose();return;}
+        if(args.Length>0&&args[0]=="--ui-preview") {Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);UiPreview(args[1]);return;}
         if(args.Length>0&&args[0]=="--ui-test") {Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);var tray=new Tray(dir);tray.Shown+=async(s,e)=>await tray.TestDashboard(args[1]);Application.Run(tray);return;}
         if(args.Length>0&&args[0]=="--node-ui-test") {Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);var tray=new Tray(dir);tray.Shown+=async(s,e)=>await tray.TestNodePicker(args[1]);Application.Run(tray);return;}
         if(args.Length>0&&args[0]=="--test-child") {while(true){File.AppendAllText(args[1],".");Thread.Sleep(50);}}
@@ -433,6 +468,33 @@ public static class Program {
             if(!created){if(show){try{using(var signal=EventWaitHandle.OpenExisting(SignalName(desktop?"Desktop":"Open")))signal.Set();}catch{}}return;}Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
             try{var tray=new Tray(dir);if(show)tray.Shown+=(s,e)=>{tray.OpenDashboard();if(desktop)tray.RequestDesktop();};Application.Run(tray);}catch(Exception e){MessageBox.Show(e.ToString(),"Claude 保护未能启动",MessageBoxButtons.OK,MessageBoxIcon.Error);}
         }
+    }
+    // Renders sample READY and BLOCKED screens (path, path-blocked.png) without touching processes or the guard.
+    static void UiPreview(string image){
+        var view=new Dashboard(Icon.ExtractAssociatedIcon(Application.ExecutablePath));
+        Action<string> shot=file=>{view.Refresh();using(var b=new Bitmap(view.Width,view.Height)){view.DrawToBitmap(b,new Rectangle(0,0,b.Width,b.Height));b.Save(file,System.Drawing.Imaging.ImageFormat.Png);}};
+        view.Show();
+        view.SetState("READY","固定出口验证通过，正在持续监测",DateTime.UtcNow.ToString("o"),0,"Example-A","203.0.113.10");
+        view.SetObservations(new List<string[]>{new[]{"ipify","203.0.113.10","一致","ok"},new[]{"Cloudflare","203.0.113.10","一致","ok"}});
+        view.Observed.Text="两路一致 · 203.0.113.10";view.Observed.ForeColor=Theme.GoodInk;view.Inspection.Text="16:42:08 实测 · 没有改变锁定状态";
+        view.SetEvents(new List<string[]>{new[]{"16:20","正常","固定出口验证通过","good"},new[]{"16:19","恢复","复检通过，手动恢复","good"},new[]{"16:18","锁定","网络地址变化，自动复检未通过","bad"},new[]{"16:02","启动","门卫启动 · 网卡 WLAN","muted"}},"16:42 api.anthropic.com");
+        Application.DoEvents();shot(image);
+        view.SetState("BLOCKED","专用代理连接失败，保护保持锁定",DateTime.UtcNow.AddMinutes(-22).ToString("o"),3,"Example-A","203.0.113.10");
+        view.SetObservations(new List<string[]>{new[]{"ipify","probe deadline exceeded","失败","bad"},new[]{"Cloudflare","probe deadline exceeded","失败","bad"}});
+        view.Observed.Text="本次未能获取 IP";view.Observed.ForeColor=Theme.BadInk;
+        view.ShowIncident("新启动的 Claude 也会被暂停，终端可能显示空白。「复检并恢复」通过出口验证后才恢复进程；「结束」只关闭进程，不会解锁。\n本轮新冻结 3 个进程；当前冻结 3 个。");
+        view.IncidentAction.Text="尚未操作。继续使用请选择「复检并恢复」。";
+        view.SetEvents(new List<string[]>{new[]{"16:41","锁定","专用代理连接失败，保护保持锁定","bad"},new[]{"16:41","重试","探测重试 3/3 · probe deadline exceeded","muted"},new[]{"16:20","正常","固定出口验证通过","good"}},"16:40 api.anthropic.com");
+        Application.DoEvents();shot(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(image)),Path.GetFileNameWithoutExtension(image)+"-blocked.png"));
+        Func<string,string,string,bool,Dictionary<string,object>> node=(n,server,type,ok)=>new Dictionary<string,object>{{"name",n},{"type",type},{"server",server},{"port",443},{"supported",ok},{"reason",ok?"":"该协议尚未支持隔离固定"}};
+        var catalog=new Dictionary<string,object>{{"ok",true},{"file",@"C:\Users\me\clash\profile.yaml"},{"digest","0"},{"source","Clash 当前订阅"},
+            {"nodes",new object[]{node("Example-A","203.0.113.10","vless",true),node("Example-B","198.51.100.20","vless",true),node("[其他节点]","[IPv4]","trojan",true),node("[域名节点]","[域名]","hysteria2",false)}}};
+        using(var picker=new NodePicker(view.Icon,"Example-A",(a,r)=>Task.FromResult(catalog),t=>Task.FromResult(catalog))){
+            picker.Show();for(int i=0;i<20;i++){Application.DoEvents();Thread.Sleep(20);}
+            picker.SelectForPreview(1);Application.DoEvents();
+            picker.Refresh();using(var b=new Bitmap(picker.Width,picker.Height)){picker.DrawToBitmap(b,new Rectangle(0,0,b.Width,b.Height));b.Save(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(image)),Path.GetFileNameWithoutExtension(image)+"-picker.png"),System.Drawing.Imaging.ImageFormat.Png);}
+        }
+        view.Dispose();
     }
     static void Check(bool yes,string name,List<string> results){if(!yes)throw new Exception("FAIL "+name);results.Add("PASS "+name);}
     static void SelfTest(string output) {
