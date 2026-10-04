@@ -74,6 +74,25 @@ Claude Code / 桌面版
 8. **凭据**：`guard-node.json` 里有节点 UUID 和 REALITY 密钥，已被 `.gitignore` 排除。不要提交，也不要发给别人。新环境从 `*.example.json` 复制后填写。
 9. **Node.js** 默认用 `C:\Program Files\nodejs\node.exe`，找不到时从 PATH 里找。`~/.claude/settings.json` 里的钩子写的是固定路径，换了 Node 安装位置时要一起改。
 
+## 打包与推送
+
+本机用真实配置，推到 GitHub 的内容不能带真实节点信息。
+
+**打包**（在项目目录运行，zip 输出到桌面，文件名带版本号）：
+
+| 模式 | 命令 | 内容 |
+|---|---|---|
+| 本机版（默认） | `powershell -ExecutionPolicy Bypass -File .\package.ps1` | 源码 + 编译好的程序 + **真实配置**（`guard-node.json`、`guard-policy.json`、`tray-settings.json`），解压即可在自己的电脑上用。文件名带 `private-CONTAINS-CREDENTIALS`，**不要外传或上传**。 |
+| 公开版 | `powershell -ExecutionPolicy Bypass -File .\package.ps1 -Mode public` | 只有模板配置，可用于 GitHub Release。打包前会检查，发现本机节点信息就拒绝生成。 |
+
+打包用的是当前 Git 版本的源码和**已部署**的程序；代码改动后先运行 `deploy.ps1`，再打包。
+
+**推送前检查**：本仓库启用了 `.githooks/pre-push`（只对本仓库生效）。每次 `git push` 前会读取本机 `guard-node.json` / `guard-policy.json` 里的真实值（UUID、REALITY 密钥、short-id、服务器与出口 IP、SNI、节点名、订阅路径），在要推送的文件、提交说明和标签说明里搜索，发现任何一项就拒绝推送并指出位置。写测试或示例时请用 RFC 5737 文档地址（如 `203.0.113.10`）和 `Example-A` 这类名字。
+
+- 在新克隆的仓库里启用：`git config core.hooksPath .githooks`
+- 手动检查全部历史：`node tools/check-secrets.cjs history`
+- 检查任意文件夹：`node tools/check-secrets.cjs dir <路径>`
+
 ## 日志与文件
 
 | 文件 | 内容 |

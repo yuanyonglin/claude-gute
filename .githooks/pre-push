@@ -1,0 +1,4 @@
+#!/bin/sh
+# Refuses a push that contains this machine's real node data (see tools/check-secrets.cjs).
+# Enabled for this repository only: git config core.hooksPath .githooks
+exec node "$(git rev-parse --show-toplevel)/tools/check-secrets.cjs" pre-push "$@"

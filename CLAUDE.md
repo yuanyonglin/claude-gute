@@ -20,6 +20,10 @@ Read README.md for what the project does. This file covers what an agent must no
 
 Never edit the live JSON files, stop the gate, or kill/restart the tray outside `deploy.ps1`. Administrator actions (`firewall.ps1 apply|remove`) show a UAC prompt; tell the user before running them.
 
+## Real node data stays local
+
+The repository is public. Never put real node data (IPs, node names, UUID, keys, SNI, profile paths) in code, tests, docs, commit or tag messages; use RFC 5737 addresses (203.0.113.x, 198.51.100.x) and names like `Example-A`. The `pre-push` hook (`core.hooksPath=.githooks`, set in this repo only) runs `tools/check-secrets.cjs` and blocks a push that contains any local value; never bypass it with `--no-verify`. `package.ps1` defaults to a private zip that includes the real config; only `-Mode public` output may be shared.
+
 ## Pitfalls seen in this repo
 
 - The tray is compiled by .NET Framework `csc`, C# 5 only: no `?.`, `$"..."`, `is T x`, or expression-bodied members.
