@@ -157,7 +157,6 @@ public sealed class Dashboard : Form {
         DateTime at;LastCheck.Text=DateTime.TryParse(last,out at)?"上次通过 "+at.ToLocalTime().ToString("MM-dd HH:mm:ss"):"尚无通过记录";
         Node.Text=node;Expected.Text=expected;
         Resume.Visible=phase=="BLOCKED"&&!IncidentVisible;
-        Code.Enabled=Desktop.Enabled=phase!="BLOCKED";
         FitText();
     }
     // rows: {source, value, verdict, "ok"|"bad"}; empty shows a placeholder.

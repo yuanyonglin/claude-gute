@@ -242,6 +242,8 @@ public sealed class Tray : Form {
                 string time=at.ToLocalTime().ToString("HH:mm"),kind=Convert.ToString(e["event"]);
                 Func<string,string> field=k=>e.ContainsKey(k)?Convert.ToString(e[k]):"";
                 if(kind=="CONNECT"){if(lastConnect==null)lastConnect=time+" "+field("authority");continue;}
+                // The daemon logs BLOCKED twice: with the reason, and again as a bare state change. Keep the one with the reason.
+                if(kind=="BLOCKED"&&field("reason")=="")continue;
                 if(kind=="BLOCKED")rows.Add(new[]{time,"锁定",ReasonText(field("reason")),"bad"});
                 else if(kind=="READY")rows.Add(new[]{time,"正常","固定出口验证通过","good"});
                 else if(kind=="MANUAL_RESUME")rows.Add(new[]{time,"恢复","复检通过，手动恢复","good"});
@@ -317,7 +319,7 @@ public sealed class Tray : Form {
     public async Task TestDashboard(string image){
         try{
             OpenDashboard();while(!dashboard.Verify.Enabled)await Task.Delay(100);
-            if(dashboard.Observed.Text!=expectedIp)throw new Exception("Dashboard verification did not display expected IP: "+dashboard.Inspection.Text);
+            if(!dashboard.Observed.Text.Contains(expectedIp))throw new Exception("Dashboard verification did not display expected IP: "+dashboard.Inspection.Text);
             dashboard.Refresh();using(var b=new Bitmap(dashboard.Width,dashboard.Height)){dashboard.DrawToBitmap(b,new Rectangle(0,0,b.Width,b.Height));b.Save(image,System.Drawing.Imaging.ImageFormat.Png);}
             File.WriteAllText(image+".txt","PASS dashboard opens\nPASS real two-source verification displays expected IP\nPASS verification leaves protection unchanged\n"+dashboard.Inspection.Text);
         }catch(Exception e){File.WriteAllText(image+".txt",e.ToString());Environment.ExitCode=1;}

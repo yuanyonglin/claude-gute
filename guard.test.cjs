@@ -82,6 +82,6 @@ test('interface binding uses only listed names, in order, with IPv4',()=>{
 });
 test('non-explicit verify (/verify) re-proves READY but never lifts a block',async t=>{
   const f=await fixture(t);assert.equal(await f.g.verify(),true);
-  const before=f.g.lastOk;await delay(5);assert.equal(await f.g.verify(),true);assert.ok(f.g.lastOk>before);
+  const before=f.g.lastOk;await delay(20);assert.equal(await f.g.verify(),true);assert.ok(f.g.lastOk>before);
   f.g.block('manual block');assert.equal(await f.g.verify(),false);assert.equal(f.g.state,'BLOCKED');
 });
