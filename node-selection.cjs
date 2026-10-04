@@ -3,7 +3,7 @@
 const fs=require('node:fs'),path=require('node:path'),net=require('node:net'),http=require('node:http'),crypto=require('node:crypto');
 const {spawn,spawnSync}=require('node:child_process');
 const yaml=require('./vendor/yaml');
-const {getViaProxy,realProbe}=require('./guard-lib.cjs');
+const {getViaProxy,realProbe,pickInterface}=require('./guard-lib.cjs');
 const dir=__dirname,run=path.join(dir,'guard-runtime');
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
@@ -46,7 +46,7 @@ function selected(file,name,digest){
 }
 function config(n,p,port){return {
   mode:'rule','log-level':'silent',ipv6:false,'allow-lan':false,'bind-address':'127.0.0.1',
-  'mixed-port':port,'interface-name':p.interfaceName,'find-process-mode':'off',
+  'mixed-port':port,'interface-name':pickInterface(p),'find-process-mode':'off',
   proxies:[{...n,name:'PINNED'}],rules:['MATCH,PINNED'],
   dns:{enable:true,ipv6:false,'enhanced-mode':'redir-host','use-hosts':false,'use-system-hosts':false,
     'default-nameserver':['1.1.1.1'],nameserver:['https://1.1.1.1/dns-query#PINNED','https://1.0.0.1/dns-query#PINNED'],

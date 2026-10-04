@@ -6,7 +6,7 @@ const net = require('node:net');
 const crypto = require('node:crypto');
 const { spawn, spawnSync } = require('node:child_process');
 const yaml = require('./vendor/yaml');
-const { Guard, realProbe } = require('./guard-lib.cjs');
+const { Guard, realProbe, pickInterface } = require('./guard-lib.cjs');
 const dir = __dirname;
 const run = path.join(dir, 'guard-runtime');
 fs.mkdirSync(run, { recursive: true });
@@ -17,7 +17,7 @@ const pinnedPath = path.join(dir, 'guard-node.json');
 const pinnedBytes = fs.readFileSync(pinnedPath);
 const node = JSON.parse(pinnedBytes);
 if (net.isIP(policy.expectedIp) !== 4 || node.server !== policy.expectedServer || net.isIP(node.server) !== 4) throw new Error('invalid pinned node/policy');
-if (!policy.interfaceName || policy.intervalMs < 1000 || policy.timeoutMs < 1000) throw new Error('invalid guard policy');
+if (![].concat(policy.interfaceName).every(n => typeof n === 'string' && n) || !policy.interfaceName.length || policy.intervalMs < 1000 || policy.timeoutMs < 1000) throw new Error('invalid guard policy');
 const latchPath = path.join(run, 'blocked.json');
 const runningPath = path.join(run, 'running.json');
 const uncleanPreviousRun = fs.existsSync(runningPath);
@@ -32,14 +32,15 @@ function log(event, details = {}) {
 function sameFiles() {
   return fs.readFileSync(policyPath).equals(policyBytes) && fs.readFileSync(pinnedPath).equals(pinnedBytes);
 }
-let core, guard, admin, stopping = false;
+let core, guard, admin, iface, stopping = false;
 async function main() {
   guard = new Guard(policy, async () => {
     if (!core || core.exitCode !== null || !sameFiles()) throw new Error('core unavailable or pinned configuration changed');
     // Transient upstream drops must not freeze Claude; a real exit-IP mismatch still fails immediately.
     let last;
     for (let attempt = 1; attempt <= 3; attempt++) {
-      try { return await realProbe(policy); }
+      // The core stays bound to the interface chosen at start; name it when that interface loses its address.
+      try { pickInterface({ interfaceName: iface }); return await realProbe(policy); }
       catch (e) {
         last = e;
         if (/mismatch|invalid/.test(e.message)) throw e;
@@ -71,9 +72,10 @@ async function main() {
     const check = net.createServer(); check.once('error', () => reject(new Error('dedicated core port is already occupied')));
     check.listen(policy.corePort, '127.0.0.1', () => check.close(resolve));
   });
+  iface = pickInterface(policy);
   const config = {
     mode: 'rule', 'log-level': 'warning', ipv6: false, 'allow-lan': false, 'bind-address': '127.0.0.1',
-    'mixed-port': policy.corePort, 'interface-name': policy.interfaceName,
+    'mixed-port': policy.corePort, 'interface-name': iface,
     'find-process-mode': 'off', 'tcp-concurrent': true,
     proxies: [{ ...node, name: 'PINNED' }], rules: ['MATCH,PINNED'],
     dns: { enable: true, ipv6: false, 'enhanced-mode': 'redir-host', 'use-hosts': false, 'use-system-hosts': false,
@@ -89,7 +91,7 @@ async function main() {
   core = spawn(exe, args, { windowsHide: true, stdio: ['ignore','ignore','ignore'] });
   core.once('error', () => guard.block('dedicated core failed to start'));
   core.once('exit', () => { if (!stopping) guard.block('dedicated core exited'); });
-  log('START', { pid: process.pid, corePid: core.pid, expectedIp: policy.expectedIp });
+  log('START', { pid: process.pid, corePid: core.pid, expectedIp: policy.expectedIp, interface: iface });
   // Bounded readiness wait does not touch any existing proxy listener.
   for (let i = 0; i < 40; i++) {
     const ready = await new Promise(resolve => {

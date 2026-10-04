@@ -2,7 +2,7 @@
   "label": "<节点名>",
   "expectedIp": "<出口 IPv4>",
   "expectedServer": "<节点服务器 IPv4>",
-  "interfaceName": "WLAN",
+  "interfaceName": ["WLAN"],
   "proxyPort": 17899,
   "corePort": 17901,
   "adminPort": 19099,

@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const net = require('node:net');
-const { Guard, tunnel } = require('./guard-lib.cjs');
+const { Guard, tunnel, pickInterface } = require('./guard-lib.cjs');
 const delay = ms => new Promise(r => setTimeout(r, ms));
 async function fixture(t) {
   const sockets = new Set();
@@ -71,4 +71,12 @@ test('invalid destination never reaches upstream',async t=>{
 test('dedicated upstream failure blocks; no direct fallback',async t=>{
   const f=await fixture(t);await f.g.verify();await new Promise(r=>f.upstream.close(r));
   await assert.rejects(tunnel(f.port,'example.com:443',500));assert.equal(f.g.state,'BLOCKED');assert.equal(f.hits(),0);
+});
+test('interface binding uses only listed names, in order, with IPv4',()=>{
+  const nics={ Mihomo:[{family:'IPv4',internal:false}], WLAN:[{family:'IPv6',internal:false}],
+    '以太网':[{family:'IPv4',internal:false}], Loopback:[{family:'IPv4',internal:true}] };
+  assert.equal(pickInterface({interfaceName:['WLAN','以太网']},nics),'以太网');
+  assert.equal(pickInterface({interfaceName:'以太网'},nics),'以太网');
+  assert.throws(()=>pickInterface({interfaceName:'WLAN'},nics),/no IPv4 address: WLAN/);
+  assert.throws(()=>pickInterface({interfaceName:['Loopback']},nics),/no IPv4/);
 });

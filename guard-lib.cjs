@@ -3,6 +3,7 @@ const http = require('node:http');
 const https = require('node:https');
 const tls = require('node:tls');
 const net = require('node:net');
+const os = require('node:os');
 const { EventEmitter } = require('node:events');
 
 function tunnel(port, authority, timeoutMs, onSocket = () => {}) {
@@ -150,4 +151,11 @@ class Guard extends EventEmitter {
     await new Promise(resolve => this.server.close(resolve));
   }
 }
-module.exports = { Guard, realProbe, getViaProxy, tunnel };
+// Bind only to interfaces the user listed, in order. Never pick by default route: TUN adapters hold IPv4 too.
+function pickInterface(policy, interfaces = os.networkInterfaces()) {
+  const names = [].concat(policy.interfaceName);
+  const up = names.find(n => (interfaces[n] || []).some(a => (a.family === 'IPv4' || a.family === 4) && !a.internal));
+  if (!up) throw new Error(`configured network interface has no IPv4 address: ${names.join(', ')}`);
+  return up;
+}
+module.exports = { Guard, realProbe, getViaProxy, tunnel, pickInterface };

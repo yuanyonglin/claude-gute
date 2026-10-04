@@ -190,6 +190,8 @@ public sealed class Tray : Form {
         if(reason=="manual block")return "已暂停，等待复检恢复";
         if(reason=="fixed exit verified")return "固定出口验证通过，正在持续监测";
         if(reason=="dedicated core exited")return "专用代理核心已退出";
+        const string nic="configured network interface has no IPv4 address: ";
+        if(reason!=null&&reason.StartsWith(nic))return "网卡不可用（"+reason.Substring(nic.Length)+"）：检查网络，或在 guard-policy.json 的 interfaceName 中加入备用网卡后重启门卫";
         return reason;
     }
     void RefreshDashboard(string phase,string reason){if(dashboard!=null&&!dashboard.IsDisposed){dashboard.SetState(phase,ReasonText(reason),lastVerified,processes.Held.Count,nodeLabel,expectedIp);dashboard.Updating=true;dashboard.Confirm.Checked=settings.mode=="confirm";dashboard.Auto.Checked=settings.mode=="auto";dashboard.Updating=false;}}
