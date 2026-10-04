@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Drawing;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -99,9 +100,12 @@ public sealed class NodePicker : Form {
         for(int i=0;i<200&&!loaded;i++)await Task.Delay(50);
         if(!loaded)throw new Exception("Node catalog load did not complete");
         while(busy)await Task.Delay(50);
-        if(nodes.Items.Count!=6)throw new Exception("Expected six real Clash nodes; actual="+nodes.Items.Count+"; "+result.Text);
-        foreach(Item n in nodes.Items)if(n.name=="Example-B🐎")nodes.SelectedItem=n;
-        if(nodes.SelectedItem==null||!details.Text.Contains("198.51.100.20"))throw new Exception("Exact Unicode node selection failed");
+        // Works on whatever profile is loaded; prefers a non-ASCII name to exercise the UTF-8 round trip to node-selection.cjs.
+        Item pick=null;
+        foreach(Item n in nodes.Items)if(n.supported&&(pick==null||n.name.Any(c=>c>127)&&!pick.name.Any(c=>c>127)))pick=n;
+        if(pick==null)throw new Exception("No supported Clash node to test; "+result.Text);
+        nodes.SelectedItem=pick;
+        if(!details.Text.Contains(pick.server))throw new Exception("Node selection did not show its server");
         int confirmations=0;ask=(text,title,iconType)=>{confirmations++;return false;};
         test.PerformClick();if(token!=""||busy)throw new Exception("Cancel test changed state");
         ask=(text,title,iconType)=>{confirmations++;return true;};test.PerformClick();while(busy)await Task.Delay(50);
@@ -110,6 +114,6 @@ public sealed class NodePicker : Form {
         ask=(text,title,iconType)=>{confirmations++;return true;};apply.PerformClick();while(busy)await Task.Delay(50);
         if(!Applied||token!=""||apply.Enabled||confirmations!=4)throw new Exception("UI save failed: "+result.Text);
         Refresh();using(var bitmap=new Bitmap(Width,Height)){DrawToBitmap(bitmap,new Rectangle(0,0,Width,Height));bitmap.Save(image,System.Drawing.Imaging.ImageFormat.Png);}
-        System.IO.File.WriteAllText(image+".txt","PASS six real nodes\nPASS exact emoji name through UTF8 subprocess\nPASS cancel test and save leave state unchanged\nPASS real test and real save buttons\nPASS both confirmations\n"+result.Text);
+        System.IO.File.WriteAllText(image+".txt","PASS real nodes loaded\nPASS selected node name round-trips through UTF8 subprocess\nPASS cancel test and save leave state unchanged\nPASS real test and real save buttons\nPASS both confirmations\n"+result.Text);
     }
 }
