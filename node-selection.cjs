@@ -4,6 +4,7 @@ const fs=require('node:fs'),path=require('node:path'),net=require('node:net'),ht
 const {spawn,spawnSync}=require('node:child_process');
 const yaml=require('./vendor/yaml');
 const {getViaProxy,realProbe,pickInterface}=require('./guard-lib.cjs');
+const history=require('./ip-history.cjs');
 const dir=__dirname,run=path.join(dir,'guard-runtime');
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
@@ -122,6 +123,8 @@ async function apply(request){
     // Journal denies resume even if the host crashes between these two atomic writes.
     const next={...p,label:t.name,expectedIp:t.ip,expectedServer:t.node.server,sourceFile:t.file,sourceNode:t.name,sourceDigest:t.digest,verifiedCountry:t.country};
     changed=true;atomic(nodeFile,t.node);atomic(policyFile,next);
+    // Recorded before the new daemon starts, so its start check sees this as the known exit, not an external change.
+    if(p.expectedIp!==t.ip)history.record(run,{kind:'manual',ip:t.ip,label:t.name,previousIp:p.expectedIp});
     const child=spawn(process.execPath,[path.join(dir,'guard-daemon.cjs')],{detached:true,windowsHide:true,stdio:'ignore'});
     let failed=false;child.on('error',()=>{failed=true;});child.unref();
     let status;

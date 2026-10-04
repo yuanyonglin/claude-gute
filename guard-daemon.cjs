@@ -7,6 +7,7 @@ const crypto = require('node:crypto');
 const { spawn, spawnSync } = require('node:child_process');
 const yaml = require('./vendor/yaml');
 const { Guard, realProbe, pickInterface } = require('./guard-lib.cjs');
+const history = require('./ip-history.cjs');
 const dir = __dirname;
 const run = path.join(dir, 'guard-runtime');
 fs.mkdirSync(run, { recursive: true });
@@ -33,6 +34,15 @@ function sameFiles() {
   return fs.readFileSync(policyPath).equals(policyBytes) && fs.readFileSync(pinnedPath).equals(pinnedBytes);
 }
 let core, guard, admin, iface, stopping = false;
+// History problems are logged as events but never stop or weaken the guard itself.
+function noteHistory(update, event, details) {
+  try {
+    const c = update();
+    if (!c) return;
+    log(event, { ...details, kind: c.kind, day: c.day, week: c.week });
+    if (c.frequent) log('IP_WARNING', { day: c.day, week: c.week });
+  } catch (e) { log('HISTORY_ERROR', { error: e.message }); }
+}
 async function main() {
   guard = new Guard(policy, async () => {
     if (!core || core.exitCode !== null || !sameFiles()) throw new Error('core unavailable or pinned configuration changed');
@@ -43,6 +53,7 @@ async function main() {
       try { pickInterface({ interfaceName: iface }); return await realProbe(policy); }
       catch (e) {
         last = e;
+        if (e.observed && e.observed.length) noteHistory(() => history.onMismatch(run, policy, e.observed), 'IP_MISMATCH', { observed: e.observed });
         if (/mismatch|invalid/.test(e.message)) throw e;
         log('PROBE_RETRY', { attempt, error: e.message });
         await new Promise(r => setTimeout(r, 800));
@@ -97,6 +108,7 @@ async function main() {
   core.once('error', () => guard.block('dedicated core failed to start'));
   core.once('exit', () => { if (!stopping) guard.block('dedicated core exited'); });
   log('START', { pid: process.pid, corePid: core.pid, expectedIp: policy.expectedIp, interface: iface });
+  noteHistory(() => history.onStart(run, policy), 'IP_CHANGE', { ip: policy.expectedIp, label: policy.label });
   // Bounded readiness wait does not touch any existing proxy listener.
   for (let i = 0; i < 40; i++) {
     const ready = await new Promise(resolve => {

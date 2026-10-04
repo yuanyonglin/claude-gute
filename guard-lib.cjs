@@ -61,7 +61,10 @@ async function realProbe(policy) {
       .then(body => body.match(/^ip=(.+)$/m)?.[1] || '')
   ]);
   if (answers.some(ip => net.isIP(ip.trim()) !== 4 || ip.trim() !== policy.expectedIp)) {
-    throw new Error('exit IP mismatch or invalid IP from verification services');
+    const err = new Error('exit IP mismatch or invalid IP from verification services');
+    // Valid IPv4 answers that differ from the expected exit, for the IP history.
+    err.observed = answers.map(ip => ip.trim()).filter(ip => net.isIP(ip) === 4 && ip !== policy.expectedIp);
+    throw err;
   }
   return policy.expectedIp;
 }
