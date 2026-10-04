@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
@@ -22,8 +23,11 @@ public sealed class ProcessGuard {
     public readonly List<Held> Held = new List<Held>();
     public readonly HashSet<string> Paths;
     public Action Persist = delegate {};
-    public ProcessGuard(IEnumerable<string> paths) { Paths = new HashSet<string>(paths.Select(Path.GetFullPath), StringComparer.OrdinalIgnoreCase); }
-    public bool Matches(string path) { return Paths.Contains(Path.GetFullPath(path)); }
+    public ProcessGuard(IEnumerable<string> paths) { Paths = new HashSet<string>(paths.Select(Normalize), StringComparer.OrdinalIgnoreCase); }
+    // Store updates change only the version segment; publisher id and the rest of the path stay pinned.
+    static readonly Regex StoreVersion = new Regex(@"\\WindowsApps\\Claude_[0-9.]+_x64__pzs8sxrjxfjjc\\",RegexOptions.IgnoreCase);
+    public static string Normalize(string path) { return StoreVersion.Replace(Path.GetFullPath(path), @"\WindowsApps\Claude_*_x64__pzs8sxrjxfjjc\"); }
+    public bool Matches(string path) { return Paths.Contains(Normalize(path)); }
     public IEnumerable<Process> Targets() {
         var names=new HashSet<string>(Paths.Select(Path.GetFileNameWithoutExtension),StringComparer.OrdinalIgnoreCase);
         foreach(Process p in Process.GetProcesses()) {
@@ -47,7 +51,8 @@ public sealed class ProcessGuard {
         foreach(Process p in Targets()) using(p) {
             try {
                 string file=p.MainModule.FileName;
-                if(!Matches(file)) continue;
+                // Same name but unlisted path: report it instead of silently leaving it unprotected.
+                if(!Matches(file)) { errors.Add(p.Id+": 同名进程不在保护名单 "+file); continue; }
                 long birth=p.StartTime.ToUniversalTime().Ticks;
                 if(kill) { p.Kill(); if(!p.WaitForExit(1000)) throw new Exception("结束未完成"); Held.RemoveAll(x=>x.pid==p.Id && x.start==birth); Persist(); count++; }
                 else if(!Held.Any(x=>x.pid==p.Id && x.start==birth)) {
@@ -410,6 +415,10 @@ public static class Program {
             p=Process.Start(new ProcessStartInfo(child,"--test-child \""+heartbeat+"\""){UseShellExecute=false,CreateNoWindow=true});Thread.Sleep(350);
             var g=new ProcessGuard(new[]{child});
             Check(!g.Matches(exe),"unrelated supervisor excluded",results);
+            var store=new ProcessGuard(new[]{@"C:\Program Files\WindowsApps\Claude_2.19675.0.0_x64__pzs8sxrjxfjjc\app\claude.exe"});
+            Check(store.Matches(@"C:\Program Files\WindowsApps\Claude_2.20001.0.0_x64__pzs8sxrjxfjjc\app\claude.exe"),"store update keeps protection",results);
+            Check(!store.Matches(@"C:\Program Files\WindowsApps\Claude_2.20001.0.0_x64__otherpublisher\app\claude.exe"),"other publisher excluded",results);
+            Check(!store.Matches(@"C:\Program Files\WindowsApps\Claude_2.20001.0.0_x64__pzs8sxrjxfjjc\app\other\claude.exe"),"other subpath excluded",results);
             string r=g.Protect(false);Check(g.Held.Count==1,"confirm mode freezes exact target",results);
             Thread.Sleep(150);long n=new FileInfo(heartbeat).Length;Thread.Sleep(250);Check(new FileInfo(heartbeat).Length==n,"frozen child produces no work while waiting",results);
             Check(!p.HasExited,"cancel retains frozen process",results);
