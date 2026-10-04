@@ -1,0 +1,8 @@
+{
+  "mode": "confirm",
+  "paths": [
+    "C:\Users\<用户名>\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe",
+    "C:\Program Files\WindowsApps\Claude_<版本>_x64__pzs8sxrjxfjjc\app\claude.exe"
+  ],
+  "adminPort": 19099
+}

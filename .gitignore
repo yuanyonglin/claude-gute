@@ -1,0 +1,21 @@
+# 本机配置与节点凭据（从 *.example.json 复制后填写）
+guard-node.json
+guard-policy.json
+tray-settings.json
+config.yaml
+config.yaml.*
+
+# 运行时、日志与备份
+guard-runtime/
+backups/
+backup-*/
+_to-delete/
+*.log
+cache.db
+heartbeat
+response-mode
+
+# 二进制与构建产物（mihomo-gate.exe 需单独放置；其余由 build-tray.ps1 生成）
+*.exe
+ClaudeGuard.ico
+ClaudeGuard.png

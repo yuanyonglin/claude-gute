@@ -1,0 +1,16 @@
+{
+  "name": "<节点名>",
+  "server": "<IPv4 地址>",
+  "port": 443,
+  "type": "vless",
+  "uuid": "<UUID>",
+  "tls": true,
+  "flow": "xtls-rprx-vision",
+  "reality-opts": {
+    "public-key": "<REALITY 公钥>",
+    "short-id": "<short-id>"
+  },
+  "servername": "<SNI 域名>",
+  "client-fingerprint": "chrome",
+  "network": "tcp"
+}
