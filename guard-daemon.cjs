@@ -60,6 +60,11 @@ async function main() {
       if (ok) { fs.rmSync(latchPath, { force: true }); log('MANUAL_RESUME'); }
       res.writeHead(ok ? 200 : 503); res.end(JSON.stringify(guard.snapshot())); return;
     }
+    // Non-explicit re-verification: never lifts a block, only confirms or blocks a READY guard.
+    if (req.method === 'POST' && req.url === '/verify') {
+      const ok = await guard.verify();
+      res.writeHead(ok ? 200 : 503); res.end(JSON.stringify(guard.snapshot())); return;
+    }
     if (req.method === 'POST' && req.url === '/block') { guard.block('manual block'); res.end(JSON.stringify(guard.snapshot())); return; }
     if (req.method === 'POST' && req.url === '/stop') { res.end('{"stopping":true}'); setImmediate(shutdown); return; }
     res.writeHead(404); res.end('{}');

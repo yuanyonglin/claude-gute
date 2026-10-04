@@ -187,7 +187,29 @@ public sealed class Tray : Form {
     }
     async Task BlockApi() { try{await Api("block");}catch(Exception e){Log("无法联系门卫阻断："+e.Message);} }
     void NetworkChanged(object s,NetworkAvailabilityEventArgs e) { if(!e.IsAvailable) Fault("Windows 报告网络断开"); }
-    void AddressChanged(object s,EventArgs e) { if(armed) Fault("Windows 网络地址发生变化，需重新核验"); }
+    int rechecking=0;
+    // Address changes (DHCP renew, virtual adapters) are common; recheck the exit once before freezing anything.
+    void AddressChanged(object s,EventArgs e) {
+        if(!armed||incident!=null||Interlocked.Exchange(ref rechecking,1)!=0)return;
+        Task.Run(async()=>{
+            try{Log("网络地址变化，自动复检");if(await FreshVerify())Log("自动复检通过");else Fault("网络地址变化，自动复检未通过");}
+            catch(Exception ex){Fault("网络地址变化，自动复检失败："+ex.Message);}
+            finally{Interlocked.Exchange(ref rechecking,0);}
+        });
+    }
+    // True only for a fresh READY proof of the configured exit. An older daemon without /verify returns 404: treated as failure.
+    async Task<bool> FreshVerify(){
+        using(var c=new HttpClient(new HttpClientHandler{UseProxy=false})){
+            c.Timeout=TimeSpan.FromSeconds(45);c.DefaultRequestHeaders.Add("Authorization","Bearer "+File.ReadAllText(Path.Combine(runtime,"admin-token")).Trim());
+            using(var r=await c.PostAsync("http://127.0.0.1:"+settings.adminPort+"/verify",null)){
+                if(!r.IsSuccessStatusCode)return false;
+                var v=json.Deserialize<Dictionary<string,object>>(await r.Content.ReadAsStringAsync());DateTime at;
+                if(!v.ContainsKey("state")||Convert.ToString(v["state"])!="READY"||!v.ContainsKey("expectedIp")||Convert.ToString(v["expectedIp"])!=expectedIp)return false;
+                if(!v.ContainsKey("lastVerified")||!DateTime.TryParse(Convert.ToString(v["lastVerified"]),out at))return false;
+                double age=(DateTime.UtcNow-at.ToUniversalTime()).TotalSeconds;return age>=0&&age<=10;
+            }
+        }
+    }
     void Fault(string reason) { Task.Run(async()=>{await serial.WaitAsync();try{await Fail(reason);}catch(Exception e){Report(e);}finally{serial.Release();}}); }
     void Report(Exception e) { lastError=e.Message; try{Log("ERROR "+e);}catch{} UI(()=>{state.Text="保护错误："+lastError;icon.ShowBalloonTip(5000,"Claude 保护执行异常",lastError,ToolTipIcon.Error);}); }
     string ReasonText(string reason){
