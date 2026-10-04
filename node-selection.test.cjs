@@ -1,0 +1,20 @@
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const { pruneTickets } = require('./node-selection.cjs');
+test('expired selection tickets are pruned; live and unreadable ones stay', t => {
+  const run = path.join(__dirname, 'guard-runtime'); fs.mkdirSync(run, { recursive: true });
+  const file = () => path.join(run, 'selection-' + crypto.randomBytes(24).toString('hex') + '.json');
+  const expired = file(), live = file(), broken = file();
+  fs.writeFileSync(expired, JSON.stringify({ expires: Date.now() - 1 }));
+  fs.writeFileSync(live, JSON.stringify({ expires: Date.now() + 600000 }));
+  fs.writeFileSync(broken, '{');
+  t.after(() => { for (const f of [expired, live, broken]) fs.rmSync(f, { force: true }); });
+  pruneTickets();
+  assert.equal(fs.existsSync(expired), false);
+  assert.equal(fs.existsSync(live), true);
+  assert.equal(fs.existsSync(broken), true);
+});

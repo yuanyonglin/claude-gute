@@ -73,9 +73,18 @@ async function isolatedProbe(n,p){
     if(!core||core.exitCode!==null||core.signalCode!==null)fs.rmSync(temp,{recursive:true,force:true});
   }
 }
+// Expired test tickets can never be applied; drop them so guard-runtime does not grow. Unreadable ones are left for inspection.
+function pruneTickets(now=Date.now()){
+  for(const f of fs.readdirSync(run)){
+    if(!/^selection-[a-f0-9]{48}\.json$/.test(f))continue;
+    let t;try{t=read(path.join(run,f));}catch{continue;}
+    if(!(t.expires>=now))fs.unlinkSync(path.join(run,f));
+  }
+}
 async function prepare(request){
   const s=selected(request.file,request.name,request.digest),p=read(policyFile);
   const tested=await isolatedProbe(s.node,p);
+  pruneTickets();
   const token=crypto.randomBytes(24).toString('hex');
   atomic(path.join(run,'selection-'+token+'.json'),{file:s.catalog.file,name:s.node.name,digest:s.catalog.digest,policyHash:hash(fs.readFileSync(policyFile)),...tested,expires:Date.now()+600000});
   return {ok:true,token,name:s.node.name,server:s.node.server,...tested};
@@ -102,7 +111,7 @@ async function apply(request){
     // A stale successful probe must never permit accepting a newly changed IP.
     const retest=await isolatedProbe(t.node,p);if(retest.ip!==t.ip||retest.country!==t.country)throw Error('候选出口发生变化，请重新测试并确认');
     ticket(request.token); // Recheck source and policy after network I/O.
-    backup=path.join(dir,'backup-node-'+Date.now());fs.mkdirSync(backup);
+    backup=path.join(dir,'backups','node-'+Date.now());fs.mkdirSync(backup,{recursive:true});
     for(const name of ['guard-policy.json','guard-node.json'])fs.copyFileSync(path.join(dir,name),path.join(backup,name));
     const marker=path.join(run,'configuration-pending.json');
     atomic(marker,{name:t.name,expectedIp:t.ip,backup,started:new Date().toISOString()});
@@ -126,7 +135,7 @@ async function apply(request){
     throw Error(e.message+(changed?'；配置事务未完成，保持锁定。备份：'+backup:'；未修改固定节点'));
   }finally{if(fd!==undefined){fs.closeSync(fd);fs.unlinkSync(lock);}}
 }
-module.exports={catalog,validateNode,selected,config,prepare,ticket,apply,isolatedProbe};
+module.exports={catalog,validateNode,selected,config,prepare,ticket,apply,isolatedProbe,pruneTickets};
 if(require.main===module)(async()=>{
   let input='';for await(const chunk of process.stdin){input+=chunk;if(input.length>32768)throw Error('请求过大');}
   const r=input.trim()?JSON.parse(input):{};let result;
