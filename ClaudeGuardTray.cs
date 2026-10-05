@@ -395,6 +395,7 @@ public sealed class Tray : Form {
                 UI(()=>{state.Text="已锁定："+incident.reason;RefreshDashboard("BLOCKED",incident.reason);ShowIncident();}); return;
             }
             var s=await Api("status");
+            statusTimeouts=0;
             var phase=Convert.ToString(s["state"]);
             lastVerified=Convert.ToString(s["lastVerified"]);
             if(phase=="READY") {
@@ -405,9 +406,15 @@ public sealed class Tray : Form {
             } else if(phase=="STARTING" && !armed && (DateTime.UtcNow-started).TotalSeconds<15) { }
             else await Fail(Convert.ToString(s["reason"]));
         } catch(Exception e) {
+            // A slow reply (machine stall, wake from sleep) gets a short grace; refused connections and errors still lock at once.
+            // The daemon blocks on its own, and the lastVerified age check above still applies once a reply arrives.
+            if(e is TaskCanceledException && ++statusTimeouts<StatusTimeoutLimit) {Log("门卫状态响应超时（第 "+statusTimeouts+" 次），暂不锁定");return;}
+            statusTimeouts=0;
             if(armed || (DateTime.UtcNow-started).TotalSeconds>15) Fault("门卫不可用："+e.Message);
         } finally {serial.Release();Interlocked.Exchange(ref busy,0);}
     }
+    const int StatusTimeoutLimit=3;
+    int statusTimeouts=0;
     bool shownIncident=false;
     void ShowIncident() {
         if(incident==null)return;
