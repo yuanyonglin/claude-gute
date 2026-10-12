@@ -10,7 +10,7 @@ public sealed class Dashboard : Form {
     public readonly Label StateTitle,StateDetail,Node,Expected,Observed,LastCheck,Processes,Inspection,Mode,LastConnect,HistorySummary;
     public readonly Chip IpWarning;
     public readonly RadioButton Confirm,Auto;
-    public readonly FlatBtn Verify,Resume,Alert,Logs,Code,Desktop,SelectNode,Settings,History;
+    public readonly FlatBtn Verify,Resume,Alert,Logs,Code,Desktop,SelectNode,Settings,History,FreezeAll,EndAll;
     public readonly TableLayoutPanel Incident;
     public readonly Label IncidentText,IncidentAction;
     public readonly FlatBtn IncidentRecover,IncidentEnd,IncidentDismiss;
@@ -31,7 +31,7 @@ public sealed class Dashboard : Form {
 
         root=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=1,Padding=new Padding(20,14,20,16)};
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
-        foreach(var h in new[]{SizeType.AutoSize,SizeType.AutoSize,SizeType.AutoSize,SizeType.Percent,SizeType.AutoSize})root.RowStyles.Add(new RowStyle(h,100));
+        foreach(var h in new[]{SizeType.AutoSize,SizeType.AutoSize,SizeType.AutoSize,SizeType.Percent,SizeType.AutoSize,SizeType.AutoSize})root.RowStyles.Add(new RowStyle(h,100));
         Controls.Add(root);
 
         // Header
@@ -107,13 +107,22 @@ public sealed class Dashboard : Form {
         log.Controls.Add(events,0,1);
         root.Controls.Add(log,0,3);
 
+        // Emergency actions: always available, both also block the gate.
+        var emergency=Row(3);emergency.Margin=new Padding(0,0,0,10);
+        emergency.Controls.Add(Anchored(Theme.Text("紧急操作（都会同时阻断网络）",9f,Theme.Muted),AnchorStyles.Left),0,0);
+        FreezeAll=new FlatBtn("一键冻结",ButtonKind.Secondary,Theme.BadInk){AccentBorder=Theme.BadBorder,Height=34};
+        EndAll=new FlatBtn("一键结束",ButtonKind.Secondary,Theme.BadInk){AccentBorder=Theme.BadBorder,Height=34,Margin=new Padding(0)};
+        emergency.Controls.Add(FreezeAll,1,0);emergency.Controls.Add(EndAll,2,0);
+        emergency.ColumnStyles[0]=new ColumnStyle(SizeType.Percent,100);emergency.ColumnStyles[1]=new ColumnStyle(SizeType.AutoSize);
+        root.Controls.Add(emergency,0,4);
+
         // Launch bar
         var footer=Row(5);footer.Margin=new Padding(0,2,0,0);
         footer.ColumnStyles.Clear();foreach(var w in new[]{0,0,100,0,0})footer.ColumnStyles.Add(w==0?new ColumnStyle(SizeType.AutoSize):new ColumnStyle(SizeType.Percent,100));
         Code=new FlatBtn("启动 Claude Code",ButtonKind.Primary,Theme.Ink);Desktop=new FlatBtn("启动桌面版",ButtonKind.Secondary,Theme.Ink);
         Alert=new FlatBtn("状态详情",ButtonKind.Link,Theme.Link){Anchor=AnchorStyles.Right};Logs=new FlatBtn("打开日志",ButtonKind.Link,Theme.Link){Anchor=AnchorStyles.Right,Margin=new Padding(0)};
         footer.Controls.Add(Code,0,0);footer.Controls.Add(Desktop,1,0);footer.Controls.Add(Alert,3,0);footer.Controls.Add(Logs,4,0);
-        root.Controls.Add(footer,0,4);
+        root.Controls.Add(footer,0,5);
 
         // Settings: the termination mode is rare to change, so it lives in a small dialog.
         settingsForm=new Form{Text="设置",FormBorderStyle=FormBorderStyle.FixedDialog,MaximizeBox=false,MinimizeBox=false,ShowInTaskbar=false,StartPosition=FormStartPosition.CenterParent,

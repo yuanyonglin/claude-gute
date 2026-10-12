@@ -15,7 +15,8 @@ using System.Windows.Forms;
 
 public class Settings { public string mode = "confirm"; public string[] paths = new string[0]; public int adminPort=19099; }
 public class Held { public int pid; public long start; public string path; }
-public class Incident { public string reason; public List<Held> held = new List<Held>(); }
+// freezeOnly: a manual freeze stays a freeze even in automatic termination mode.
+public class Incident { public string reason; public bool freezeOnly; public List<Held> held = new List<Held>(); }
 
 public sealed class ProcessGuard {
     [DllImport("ntdll.dll")] static extern int NtSuspendProcess(IntPtr handle);
@@ -323,6 +324,7 @@ public sealed class Tray : Form {
             dashboard.IncidentDismiss.Click+=(s,e)=>{Log("用户关闭提示；仍保持冻结与阻断");dashboard.HideIncident();};
             dashboard.Logs.Click+=(s,e)=>{try{Process.Start(new ProcessStartInfo("explorer.exe","\""+runtime+"\""){UseShellExecute=true});}catch(Exception ex){Report(ex);}};
             dashboard.Code.Click+=(s,e)=>Launch(false);dashboard.Desktop.Click+=(s,e)=>Launch(true);
+            dashboard.FreezeAll.Click+=async(s,e)=>await ManualLock(false);dashboard.EndAll.Click+=async(s,e)=>await ManualLock(true);
         }
         RefreshDashboard(incident!=null?"BLOCKED":armed?"READY":"STARTING",incident!=null?incident.reason:status);
         dashboard.Show();dashboard.WindowState=FormWindowState.Normal;dashboard.Activate();
@@ -376,10 +378,12 @@ public sealed class Tray : Form {
         }catch(Exception e){File.WriteAllText(image+".txt",e.ToString());Environment.ExitCode=1;}
         finally{closing=true;timer.Dispose();icon.Dispose();Application.Exit();}
     }
-    async Task Fail(string reason) {
-        if(incident==null) { incident=new Incident{reason=reason};lastAction="尚未操作。继续使用请选择「复检并恢复」，不是「结束进程」。"; SaveIncident(); Log("故障 "+reason); }
+    bool AutoKill {get{return settings.mode=="auto"&&!(incident!=null&&incident.freezeOnly);}}
+    async Task Fail(string reason,bool manual=false,bool kill=false) {
+        if(incident==null) { incident=new Incident{reason=reason,freezeOnly=manual&&!kill};lastAction="尚未操作。继续使用请选择「复检并恢复」，不是「结束进程」。"; SaveIncident(); Log((manual?"手动 ":"故障 ")+reason); }
+        else if(manual) { if(kill)incident.freezeOnly=false; SaveIncident(); Log("手动 "+reason+"（已处于锁定）"); }
         // Suspend/kill first if the gate is hung: do not wait for a network control timeout.
-        result=processes.Protect(settings.mode=="auto");
+        result=processes.Protect(manual?kill:AutoKill);
         await BlockApi();
         status="已锁定："+incident.reason;
         UI(()=>{state.Text=status; icon.Icon=SystemIcons.Error; RefreshDashboard("BLOCKED",incident.reason);ShowIncident();});
@@ -389,7 +393,7 @@ public sealed class Tray : Form {
         await serial.WaitAsync();
         try {
             if(incident!=null) {
-                if(++tick%2==0) result=processes.Protect(settings.mode=="auto");
+                if(++tick%2==0) result=processes.Protect(AutoKill);
                 try{var live=await Api("status");lastVerified=Convert.ToString(live["lastVerified"]);}catch(Exception ex){lastError=ex.Message;}
                 await BlockApi();
                 UI(()=>{state.Text="已锁定："+incident.reason;RefreshDashboard("BLOCKED",incident.reason);ShowIncident();}); return;
@@ -431,6 +435,20 @@ public sealed class Tray : Form {
             result=processes.Protect(true);Log(result);ActionResult(DateTime.Now.ToString("HH:mm:ss")+" "+result+"\n保护仍锁定；重新使用前需复检恢复。");
             RefreshDashboard("BLOCKED",incident==null?status:incident.reason);if(dashboard!=null&&!dashboard.IsDisposed)dashboard.IncidentText.Text=AlertText();
         }catch(Exception ex){ActionResult("结束未完成："+ex.Message);Report(ex);}finally{serial.Release();if(dashboard!=null&&!dashboard.IsDisposed)dashboard.IncidentEnd.Enabled=true;}
+    }
+    async Task ManualLock(bool kill){
+        string ask=kill?"将阻断 Claude 网络，并强制结束全部已识别的 Claude Code 和桌面进程（包括正在运行的会话）。\n未完成的任务会中断，进程不能恢复，只能重新启动。\n网络需「复检并恢复」后才放开。确定？"
+            :"将阻断 Claude 网络，并暂停全部已识别的 Claude Code 和桌面进程（包括正在运行的会话）。\n「复检并恢复」通过出口验证后，进程从暂停处继续。确定？";
+        if(MessageBox.Show(dashboard,ask,kill?"一键结束":"一键冻结",MessageBoxButtons.YesNo,MessageBoxIcon.Warning,MessageBoxDefaultButton.Button2)!=DialogResult.Yes)return;
+        dashboard.FreezeAll.Enabled=dashboard.EndAll.Enabled=false;
+        await serial.WaitAsync();
+        Exception failure=null;
+        try{await Fail(kill?"用户一键结束全部 Claude":"用户一键冻结全部 Claude",true,kill);Log(result);ActionResult(DateTime.Now.ToString("HH:mm:ss")+" "+result+"\n保护已锁定；继续使用请「复检并恢复」。");}
+        catch(Exception ex){failure=ex;}
+        try{
+            // Fail stops at a process error before blocking; the gate must still be blocked.
+            if(failure!=null){await BlockApi();ActionResult((kill?"结束":"冻结")+"未完成："+failure.Message);Report(failure);}
+        }finally{serial.Release();if(dashboard!=null&&!dashboard.IsDisposed)dashboard.FreezeAll.Enabled=dashboard.EndAll.Enabled=true;}
     }
     string AlertText(){return "新启动的 Claude 也会被暂停，终端可能显示空白。「复检并恢复」通过出口验证后才恢复进程；「结束」只关闭进程，不会解锁。"+(result==""?"":"\n"+result);}
     void ShowStatus(){if(incident!=null){shownIncident=false;ShowIncident();}else MessageBox.Show(status+"\n模式："+settings.mode+"\n"+lastError,"Claude 网络保护");}
