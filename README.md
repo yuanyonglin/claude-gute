@@ -113,3 +113,7 @@ Claude Code / 桌面版
 - 托盘自检：`ClaudeGuardTray.next.exe --self-test <输出文件>`
 - 界面截图：`ClaudeGuardTray.next.exe --ui-preview <png>`，会额外生成 `-blocked.png` 和 `-picker.png`。
 - `--ui-test`、`--recovery-test`、`--node-ui-test` 会按当前目录的真实配置启动托盘，**只能在端口错开的隔离副本里运行**，详见 `CLAUDE.md`。
+
+## macOS
+
+macOS 移植进度与接手步骤见 [docs/macos-port.md](docs/macos-port.md)。

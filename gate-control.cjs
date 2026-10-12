@@ -9,7 +9,7 @@ const quiet = process.argv.includes('--quiet');
 if (!['status','check','resume','block','stop'].includes(command)) throw new Error('status | check | resume | block | stop');
 let token;
 try { token = fs.readFileSync(path.join(dir, 'guard-runtime/admin-token'), 'utf8').trim(); }
-catch { if (!quiet) console.error('Guard not started. Run start-guard.ps1.'); process.exit(1); }
+catch { if (!quiet) console.error('Guard not started. Run ' + (process.platform === 'win32' ? 'start-guard.ps1' : 'start-guard.sh') + '.'); process.exit(1); }
 const read = command === 'status' || command === 'check';
 // Freshness bound covers a full bounded verify cycle: interval plus three probe attempts plus slack.
 const freshBound = policy.intervalMs + 3 * (policy.timeoutMs + 1000) + 5000;

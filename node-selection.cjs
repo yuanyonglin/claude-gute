@@ -3,7 +3,7 @@
 const fs=require('node:fs'),path=require('node:path'),net=require('node:net'),http=require('node:http'),crypto=require('node:crypto');
 const {spawn,spawnSync}=require('node:child_process');
 const yaml=require('./vendor/yaml');
-const {getViaProxy,realProbe,pickInterface}=require('./guard-lib.cjs');
+const {getViaProxy,realProbe,pickInterface,coreExecutable,clashVergeDir}=require('./guard-lib.cjs');
 const history=require('./ip-history.cjs');
 const dir=__dirname,run=path.join(dir,'guard-runtime');
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
@@ -11,7 +11,7 @@ const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
 const read=f=>JSON.parse(fs.readFileSync(f,'utf8'));
 const policyFile=path.join(dir,'guard-policy.json'),nodeFile=path.join(dir,'guard-node.json');
 function atomic(file,value){const temp=file+'.'+crypto.randomBytes(6).toString('hex')+'.tmp';fs.writeFileSync(temp,JSON.stringify(value,null,2));fs.renameSync(temp,file);}
-function catalog(file,base=path.join(process.env.APPDATA,'io.github.clash-verge-rev.clash-verge-rev')){
+function catalog(file,base=clashVergeDir()){
   let source='自选本地配置';
   if(!file){
     let manifest;try{manifest=yaml.parse(fs.readFileSync(path.join(base,'profiles.yaml'),'utf8'));}catch{throw Error('无法读取 Clash 配置索引，请手动选择 YAML 文件');}
@@ -59,7 +59,7 @@ async function isolatedProbe(n,p){
   fs.mkdirSync(run,{recursive:true});const temp=fs.mkdtempSync(path.join(run,'candidate-'));const port=await freePort();let core;
   try{
     const cfg=path.join(temp,'core.yaml');fs.writeFileSync(cfg,yaml.stringify(config(n,p,port)));
-    const exe=path.join(dir,'mihomo-gate.exe'),args=['-d',temp,'-f',cfg];
+    const exe=coreExecutable(dir),args=['-d',temp,'-f',cfg];
     const check=spawnSync(exe,[...args,'-t'],{windowsHide:true,timeout:10000});
     if(check.status!==0)throw Error('候选节点未通过核心配置检查');
     core=spawn(exe,args,{windowsHide:true,stdio:'ignore'});let startError=false;core.on('error',()=>{startError=true;});

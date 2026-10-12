@@ -19,3 +19,8 @@ response-mode
 *.exe
 ClaudeGuard.ico
 ClaudeGuard.png
+
+# macOS: mihomo core binary and the built menu bar app
+mihomo-gate
+ClaudeGuard.app/
+macos/ClaudeGuard/.build/

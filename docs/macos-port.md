@@ -1,6 +1,51 @@
 # macOS 移植方案
 
-状态：方案，尚未实现。在 Mac 上由 Claude Code 接手实现；本文是交接文档，先读完 README.md 和 CLAUDE.md 再读这里。
+状态：第 1 阶段的代码已在 Windows 上写好（见“进度”），尚未在 Mac 上运行过。在 Mac 上由 Claude Code 接手；本文是交接文档，先读完 README.md 和 CLAUDE.md 再读这里。
+
+## 进度
+
+已完成（Windows 上验证过的标 ✓）：
+
+- ✓ 共用代码平台化，`guard-lib.cjs` 新增 `coreExecutable`、`clashVergeDir`、`startGuardCommand`，被 `guard-daemon.cjs`、`node-selection.cjs`、`guard-hook.cjs` 使用；`gate-control.cjs` 提示按平台。测试 `platform.test.cjs`。Windows 行为不变，全部测试通过。
+- ✓ `start-guard.sh`：在 Windows Git Bash 下用端口偏移的隔离副本实测过（启动后 READY；已在运行时直接返回 0）。Mac 上未运行。
+- `deploy.sh`：只做过 `sh -n` 语法检查。依赖 `lsof`、`pkill`、`open`，未实测。
+- `install-launchagent.sh`：生成并加载 `~/Library/LaunchAgents/local.claude-guard.start.plist`。未实测。
+- `.gitattributes` 保证 `.sh` 为 LF；`.gitignore` 加了 `mihomo-gate`、`ClaudeGuard.app/`、`macos/ClaudeGuard/.build/`。
+
+未开始：第 2 阶段菜单栏 App（Swift，需在 Mac 上写和编译）、第 3 阶段系统层兜底。
+
+## 在 Mac 上接手：按顺序做
+
+1. **准备文件**（都不进 git）
+   - 下载 mihomo 官方 darwin 构建（Apple 芯片用 arm64），放到仓库根目录命名 `mihomo-gate`，`chmod +x mihomo-gate`；首次运行若被 Gatekeeper 拦，`xattr -d com.apple.quarantine mihomo-gate`。
+   - `cp guard-policy.example.json guard-policy.json`，把 `interfaceName` 改成 Mac 的网卡（`networksetup -listallhardwareports` 查，Wi-Fi 通常 `en0`），端口可保持默认。
+   - `guard-node.json`：从 Windows 机器拷贝（含凭据，走私密渠道，不要进 git）；或先装好 Clash Verge 后用节点选择流程生成。
+   - `cp tray-settings.example.json tray-settings.json`（第 2 阶段才用到）。
+2. **验证共用代码**：`node --test *.test.cjs` 全部通过。
+3. **隔离试跑**（不要用默认端口，避免和正在用的东西冲突）：复制到临时目录，三个端口偏移，跑 `sh start-guard.sh`，`node gate-control.cjs status` 应为 READY；然后 `node gate-control.cjs stop` 并删除临时目录。
+4. **正式启用**：在仓库目录 `sh start-guard.sh` → READY 后运行 `sh install-launchagent.sh`（登录自启）。
+5. **接入 Claude Code**：在 `~/.claude/settings.json` 合并以下内容（保留已有的其他 env 和钩子；`<repo>` 换成仓库绝对路径，`node` 写 `command -v node` 的绝对路径）。Windows 上用的是同样的配置：
+
+   ```json
+   {
+     "env": {
+       "HTTPS_PROXY": "http://127.0.0.1:17899", "HTTP_PROXY": "http://127.0.0.1:17899",
+       "https_proxy": "http://127.0.0.1:17899", "http_proxy": "http://127.0.0.1:17899",
+       "ALL_PROXY": "", "all_proxy": "",
+       "NO_PROXY": "127.0.0.1,localhost,::1", "no_proxy": "127.0.0.1,localhost,::1"
+     },
+     "hooks": {
+       "SessionStart": [{ "hooks": [{ "type": "command", "command": "/usr/local/bin/node <repo>/guard-hook.cjs", "timeout": 35 }] }],
+       "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "/usr/local/bin/node <repo>/guard-hook.cjs", "timeout": 20 }] }]
+     }
+   }
+   ```
+
+   改完新开会话验证：门卫停止时消息被拦住。注意：从这一步起，当前 Claude 会话也经过门卫，停门卫会断开自己。
+6. **实测 `deploy.sh`**：告诉用户会断网约 10 秒后再跑；确认日志顺序与 `deploy.ps1` 一致。发现问题直接修脚本。
+7. **桌面版**：`open -a Claude --args --proxy-server=http://127.0.0.1:17899`，写成 `launch-desktop.sh`（对应 `launch-desktop.ps1`，启动前先确认门卫 READY）。
+8. **第 2 阶段**：见下文，建议目录 `macos/ClaudeGuard/`（Swift Package），构建产物拷成仓库根的 `ClaudeGuard.app`，`start-guard.sh` 和 `deploy.sh` 已经会在它存在时启动它。
+9. 每步完成后更新本文“进度”一节并提交。
 
 ## 目标
 

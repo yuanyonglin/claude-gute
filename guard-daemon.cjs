@@ -6,7 +6,7 @@ const net = require('node:net');
 const crypto = require('node:crypto');
 const { spawn, spawnSync } = require('node:child_process');
 const yaml = require('./vendor/yaml');
-const { Guard, realProbe, pickInterface } = require('./guard-lib.cjs');
+const { Guard, realProbe, pickInterface, coreExecutable } = require('./guard-lib.cjs');
 const history = require('./ip-history.cjs');
 const dir = __dirname;
 const run = path.join(dir, 'guard-runtime');
@@ -100,7 +100,7 @@ async function main() {
   };
   // IP-literal proxy and DoH endpoints need no bootstrap DNS. No TUN, DNS listener or controller.
   const cfg = path.join(run, 'core.yaml'); fs.writeFileSync(cfg, yaml.stringify(config));
-  const exe = path.join(dir, 'mihomo-gate.exe');
+  const exe = coreExecutable(dir);
   const args = ['-d', run, '-f', cfg];
   const validation = spawnSync(exe, [...args, '-t'], { windowsHide: true, timeout: 10000 });
   if (validation.status !== 0) throw new Error('dedicated core config validation failed');

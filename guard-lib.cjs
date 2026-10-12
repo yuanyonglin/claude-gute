@@ -161,4 +161,21 @@ function pickInterface(policy, interfaces = os.networkInterfaces()) {
   if (!up) throw new Error(`configured network interface has no IPv4 address: ${names.join(', ')}`);
   return up;
 }
-module.exports = { Guard, realProbe, getViaProxy, tunnel, pickInterface };
+// Platform-specific locations; everything else in the .cjs files is shared between Windows and macOS.
+function coreExecutable(dir, platform = process.platform) {
+  return require('node:path').join(dir, platform === 'win32' ? 'mihomo-gate.exe' : 'mihomo-gate');
+}
+function clashVergeDir(platform = process.platform, env = process.env, home = os.homedir()) {
+  const pathLib = platform === 'win32' ? require('node:path').win32 : require('node:path').posix;
+  const id = 'io.github.clash-verge-rev.clash-verge-rev';
+  if (platform === 'win32') return pathLib.join(env.APPDATA, id);
+  if (platform === 'darwin') return pathLib.join(home, 'Library', 'Application Support', id);
+  return pathLib.join(env.XDG_DATA_HOME || pathLib.join(home, '.local', 'share'), id);
+}
+// The script that starts tray and gate: start-guard.ps1 on Windows, start-guard.sh elsewhere.
+function startGuardCommand(dir, platform = process.platform) {
+  const pathLib = platform === 'win32' ? require('node:path').win32 : require('node:path').posix;
+  if (platform === 'win32') return { file: 'powershell.exe', args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', pathLib.join(dir, 'start-guard.ps1')] };
+  return { file: '/bin/sh', args: [pathLib.join(dir, 'start-guard.sh')] };
+}
+module.exports = { Guard, realProbe, getViaProxy, tunnel, pickInterface, coreExecutable, clashVergeDir, startGuardCommand };
