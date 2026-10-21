@@ -116,7 +116,7 @@ public sealed class Tray : Form {
         processes=new ProcessGuard(settings.paths);
         if(File.Exists(IncidentFile)) { incident=json.Deserialize<Incident>(File.ReadAllText(IncidentFile)); processes.Held.AddRange(incident.held); }
         processes.Persist=SaveIncident;
-        client=new HttpClient(new HttpClientHandler{UseProxy=false}); client.Timeout=TimeSpan.FromMilliseconds(1300);
+        client=new HttpClient(new HttpClientHandler{UseProxy=false}); client.Timeout=TimeSpan.FromMilliseconds(3000);
         Text="Claude 网络保护"; ShowInTaskbar=false; WindowState=FormWindowState.Minimized;
         var menu=new ContextMenuStrip();
         state=new ToolStripMenuItem("检查中"); state.Enabled=false; menu.Items.Add(state);
@@ -175,7 +175,7 @@ public sealed class Tray : Form {
     void SaveIncident() { if(incident!=null) { incident.held=processes.Held; Atomic(IncidentFile,json.Serialize(incident)); } }
     void Log(string text) { var f=Path.Combine(runtime,"tray.log"); if(File.Exists(f)&&new FileInfo(f).Length>1048576) File.Copy(f,f+".previous",true); if(File.Exists(f)&&new FileInfo(f).Length>1048576)File.WriteAllText(f,""); File.AppendAllText(f,DateTime.Now.ToString("s")+" "+text+Environment.NewLine); }
     void UI(Action action) { if(!closing && IsHandleCreated) BeginInvoke(action); }
-    async Task<Dictionary<string,object>> Api(string op,int timeout=1300) {
+    async Task<Dictionary<string,object>> Api(string op,int timeout=3000) {
         var token=File.ReadAllText(Path.Combine(runtime,"admin-token")).Trim();
         using(var request=new HttpRequestMessage(op=="status"?HttpMethod.Get:HttpMethod.Post,"http://127.0.0.1:"+settings.adminPort+"/"+op)) {
             request.Headers.Add("Authorization","Bearer "+token);
