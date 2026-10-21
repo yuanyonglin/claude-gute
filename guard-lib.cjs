@@ -145,7 +145,13 @@ class Guard extends EventEmitter {
       client.pipe(upstream); upstream.pipe(client);
       upstream.once('close', () => client.destroy());
       this.emit('tunnel', req.url);
-    } catch { client.destroy(); this.block('dedicated upstream connection failed'); }
+    } catch {
+      // A client that gives up (retry, cancel, timeout) tears down its own upstream socket, which surfaces
+      // here as a tunnel rejection. That is not an upstream fault and must not latch the whole guard.
+      const aborted = client.destroyed;
+      client.destroy();
+      if (!aborted) this.block('dedicated upstream connection failed');
+    }
   }
   async listen(port = this.policy.proxyPort) {
     await new Promise((resolve, reject) => {
