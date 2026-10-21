@@ -56,7 +56,9 @@ async function main() {
         if (e.observed && e.observed.length) noteHistory(() => history.onMismatch(run, policy, e.observed), 'IP_MISMATCH', { observed: e.observed });
         if (/mismatch|invalid/.test(e.message)) throw e;
         log('PROBE_RETRY', { attempt, error: e.message });
-        await new Promise(r => setTimeout(r, 800));
+        // 800ms is shorter than a stalled TUN/proxy TLS handshake takes to recover; retrying that fast just
+        // burns attempts. Wait long enough for the link to come back before spending the next attempt.
+        await new Promise(r => setTimeout(r, 2500));
       }
     }
     throw last;
