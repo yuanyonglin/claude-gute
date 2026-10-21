@@ -120,7 +120,11 @@ class Guard extends EventEmitter {
     if (age < 0 || age > this.policy.intervalMs + this.policy.timeoutMs + 1000) {
       this.block('verification expired (sleep, clock change or stalled monitor)'); return false;
     }
-    if (age >= this.policy.intervalMs) return this.verify();
+    // While a tunnel is live, a client is depending on this exit right now, so re-prove it on the shorter
+    // active interval. Idle guards keep the slower interval and stay quiet.
+    const activeIntervalMs = this.policy.activeIntervalMs || 10000;
+    const intervalMs = this.sockets.size > 0 ? Math.min(this.policy.intervalMs, activeIntervalMs) : this.policy.intervalMs;
+    if (age >= intervalMs) return this.verify();
     return true;
   }
   async connect(req, client, head) {
