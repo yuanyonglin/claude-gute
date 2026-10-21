@@ -18,5 +18,8 @@ set "ALL_PROXY="
 set "all_proxy="
 set "NO_PROXY="
 set "no_proxy="
-"C:\Users\JSYL-003\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe" %*
+set "CLAUDE_EXE=%USERPROFILE%\.local\bin\claude.exe"
+if not exist "%CLAUDE_EXE%" set "CLAUDE_EXE=C:\Users\JSYL-003\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\bin\claude.exe"
+if not exist "%CLAUDE_EXE%" (echo claude.exe not found. Install Claude Code first. & exit /b 1)
+"%CLAUDE_EXE%" %*
 exit /b %errorlevel%
