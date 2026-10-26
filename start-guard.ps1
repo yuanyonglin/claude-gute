@@ -3,6 +3,9 @@ $ErrorActionPreference='Stop'
 $dir=$PSScriptRoot
 $node='C:\Program Files\nodejs\node.exe'
 if(-not (Test-Path $node)){ $node=(Get-Command node.exe -ErrorAction Stop).Source }
+# Keep Claude Code's own settings pointing at the gate; Orca and other tools may rewrite them.
+$wire=Join-Path $dir 'install-claude-settings.cjs'
+if(Test-Path $wire){ & $node $wire --quiet | Out-Null }
 & (Join-Path $dir 'start-tray.ps1')
 $existing=& $node (Join-Path $dir 'gate-control.cjs') status --quiet
 if ($LASTEXITCODE -eq 0) {

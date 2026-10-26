@@ -28,7 +28,7 @@ Claude Code / 桌面版
 
 ## 日常使用
 
-- **Claude Code**：`~/.claude/settings.json` 已全局设置代理，直接用即可。每次会话开始和每条消息提交前，钩子 `guard-hook.cjs` 会检查门卫，门卫不是 READY 时 Claude Code 不会继续。
+- **Claude Code**：`~/.claude/settings.json` 的 `env`（`HTTPS_PROXY=http://127.0.0.1:17899`）和 `SessionStart` / `UserPromptSubmit` 钩子（`guard-hook.cjs`）把它固定到门卫，所以从 Orca、终端还是桌面启动都一样，不依赖某个启动脚本。每次登录或会话开始，`start-guard.ps1` 会幂等补齐这两项；被 Orca 之类重写了就双击 `install-claude-settings.cmd` 恢复。钩子检查不过时 Claude Code 不会继续。
 - **Claude 桌面版**：用桌面快捷方式「Claude 桌面安全启动」打开，不要从开始菜单直接打开（那样不带代理参数，只能靠防火墙兜底）。
 - **主界面**：桌面「Claude Guard」，或双击托盘图标。
 
