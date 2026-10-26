@@ -45,6 +45,37 @@ function selected(file,name,digest){
   const n=doc.proxies.find(n=>n.name===name);if(!n)throw Error('指定节点已不存在');validateNode(n);
   return {catalog:c,node:n};
 }
+// Read the subscription URL that Clash already points at, then save the downloaded copy under
+// guard-runtime/sources. Clash profile files and the Clash API are only read, never written.
+function subscriptionSource(base=clashVergeDir()){
+  let manifest;try{manifest=yaml.parse(fs.readFileSync(path.join(base,'profiles.yaml'),'utf8'));}catch{throw Error('无法读取 Clash 配置索引，拿不到订阅地址');}
+  const item=manifest.items?.find(x=>x.uid===manifest.current);
+  if(!item?.url)throw Error('当前 Clash 订阅没有订阅地址；可以用「选择文件…」导入 YAML');
+  return {url:item.url,uid:String(item.uid||'current'),name:item.name||item.uid};
+}
+async function download(url,timeoutMs){
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);
+  try{
+    const res=await fetch(url,{headers:{'User-Agent':'clash.meta'},redirect:'follow',signal:controller.signal});
+    if(!res.ok)throw Error('订阅下载失败 HTTP '+res.status);
+    return await res.text();
+  }catch(e){
+    if(e.name==='AbortError')throw Error('订阅下载超时');
+    throw Error('订阅下载失败：'+e.message);
+  }finally{clearTimeout(timer);}
+}
+async function fetchCatalog(request){
+  const p=read(policyFile);
+  const target=request?.url?{url:String(request.url),uid:'custom',name:'自定义订阅'}:subscriptionSource();
+  const text=await download(target.url,p.timeoutMs||18000);
+  let doc;try{doc=yaml.parse(text);}catch{throw Error('订阅内容不是有效的 YAML');}
+  if(!Array.isArray(doc?.proxies))throw Error('订阅不是 Clash 内联节点格式，需要返回 Clash YAML 的地址');
+  const folder=path.join(run,'sources');fs.mkdirSync(folder,{recursive:true});
+  const file=path.join(folder,target.uid.replace(/[^A-Za-z0-9_-]/g,'_')+'.yaml');
+  const temp=file+'.'+crypto.randomBytes(6).toString('hex')+'.tmp';fs.writeFileSync(temp,text);fs.renameSync(temp,file);
+  const c=catalog(file);
+  return {ok:true,file:c.file,digest:c.digest,source:target.name+'（刚更新）',nodes:c.nodes,fetchedFrom:new URL(target.url).host,fetchedAt:new Date().toISOString()};
+}
 function config(n,p,port){return {
   mode:'rule','log-level':'silent',ipv6:false,'allow-lan':false,'bind-address':'127.0.0.1',
   'mixed-port':port,'interface-name':pickInterface(p),'find-process-mode':'off',
@@ -138,13 +169,14 @@ async function apply(request){
     throw Error(e.message+(changed?'；配置事务未完成，保持锁定。备份：'+backup:'；未修改固定节点'));
   }finally{if(fd!==undefined){fs.closeSync(fd);fs.unlinkSync(lock);}}
 }
-module.exports={catalog,validateNode,selected,config,prepare,ticket,apply,isolatedProbe,pruneTickets};
+module.exports={catalog,validateNode,selected,config,prepare,ticket,apply,isolatedProbe,pruneTickets,subscriptionSource,fetchCatalog};
 if(require.main===module)(async()=>{
   let input='';for await(const chunk of process.stdin){input+=chunk;if(input.length>32768)throw Error('请求过大');}
   const r=input.trim()?JSON.parse(input):{};let result;
   if(process.argv[2]==='list')result={ok:true,...catalog(r.file)};
   else if(process.argv[2]==='test')result=await prepare(r);
   else if(process.argv[2]==='apply')result=await apply(r);
+  else if(process.argv[2]==='fetch')result=await fetchCatalog(r);
   else throw Error('未知操作');
   console.log(JSON.stringify(result));
 })().catch(e=>{console.log(JSON.stringify({ok:false,error:e.message}));process.exitCode=1;});

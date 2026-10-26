@@ -13,6 +13,7 @@ public sealed class NodePicker : Form {
     readonly TextBox source=new TextBox{ReadOnly=true,BorderStyle=BorderStyle.FixedSingle,BackColor=Theme.Surface,Dock=DockStyle.Fill,Margin=new Padding(0,4,10,0)};
     readonly Label details=Theme.Text("",9f,Theme.Muted),result=Theme.Text("",9.5f,Theme.Body);
     readonly Button refresh=new FlatBtn("读取当前 Clash",ButtonKind.Secondary,Theme.Ink){Height=34},browse=new FlatBtn("选择文件…",ButtonKind.Secondary,Theme.Ink){Height=34,Margin=new Padding(0)},
+        update=new FlatBtn("获取最新订阅",ButtonKind.Secondary,Theme.Ink){Height=34},
         test=new FlatBtn("测试所选节点",ButtonKind.Secondary,Theme.Ink),apply=new FlatBtn("保存为固定节点",ButtonKind.Primary,Theme.Link){Enabled=false};
     readonly string current;
     static readonly Font NameFont=Theme.Font(10f,FontStyle.Bold),MetaFont=new Font(Theme.Mono,9f),NoteFont=Theme.Font(9f);
@@ -34,9 +35,9 @@ public sealed class NodePicker : Form {
         foreach(var h in new[]{SizeType.AutoSize,SizeType.AutoSize,SizeType.AutoSize,SizeType.Percent,SizeType.AutoSize,SizeType.AutoSize,SizeType.AutoSize})root.RowStyles.Add(new RowStyle(h,100));
         root.Controls.Add(Theme.Text("更换固定节点",13f,Theme.Ink,FontStyle.Bold),0,0);
         var currentLabel=Theme.Text("当前："+current+"。测试在隔离核心中进行，不改变主 Clash。",9.5f,Theme.Muted);currentLabel.Margin=new Padding(0,4,0,12);root.Controls.Add(currentLabel,0,1);
-        var sourceRow=new TableLayoutPanel{AutoSize=true,ColumnCount=3,Dock=DockStyle.Fill,Margin=new Padding(0,0,0,12)};
-        sourceRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));sourceRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));sourceRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        sourceRow.Controls.Add(source,0,0);sourceRow.Controls.Add(refresh,1,0);sourceRow.Controls.Add(browse,2,0);root.Controls.Add(sourceRow,0,2);
+        var sourceRow=new TableLayoutPanel{AutoSize=true,ColumnCount=4,Dock=DockStyle.Fill,Margin=new Padding(0,0,0,12)};
+        sourceRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));sourceRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));sourceRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));sourceRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        sourceRow.Controls.Add(source,0,0);sourceRow.Controls.Add(update,1,0);sourceRow.Controls.Add(refresh,2,0);sourceRow.Controls.Add(browse,3,0);root.Controls.Add(sourceRow,0,2);
         var list=new RoundPanel{Fill=Theme.Surface,Stroke=Theme.Border,AutoSize=false,Padding=new Padding(1,6,1,6),Margin=new Padding(0,0,0,8)};
         list.Controls.Add(nodes);root.Controls.Add(list,0,3);
         details.Margin=new Padding(2,0,0,10);root.Controls.Add(details,0,4);
@@ -50,6 +51,7 @@ public sealed class NodePicker : Form {
         Resize+=(s,e)=>{result.MaximumSize=details.MaximumSize=new Size(Math.Max(200,root.ClientSize.Width-root.Padding.Horizontal-40),0);};
         nodes.DrawItem+=DrawNode;
         refresh.Click+=async(s,e)=>await LoadNodes("");
+        update.Click+=async(s,e)=>await FetchLatest();
         browse.Click+=async(s,e)=>{using(var d=new OpenFileDialog{Filter="Clash YAML|*.yaml;*.yml",CheckFileExists=true})if(d.ShowDialog(this)==DialogResult.OK)await LoadNodes(d.FileName);};
         nodes.SelectedIndexChanged+=(s,e)=>{token="";apply.Enabled=false;var n=nodes.SelectedItem as Item;details.Text=n==null?"":n.server+":"+n.port+"  ·  "+n.type+(n.supported?"":"\n"+n.reason);result.Text="选择尚未保存。请测试后核对出口，再确认保存。";test.Enabled=!busy&&n!=null&&n.supported;};
         test.Click+=async(s,e)=>await TestNode();apply.Click+=async(s,e)=>await ApplyNode();Shown+=async(s,e)=>await LoadNodes("");
@@ -71,14 +73,24 @@ public sealed class NodePicker : Form {
         TextRenderer.DrawText(g,n.server+":"+n.port+" · "+n.type,MetaFont,new Rectangle(tx,cy+(int)(1*k),textRect.Width,r.Height/2-(int)(4*k)),Theme.Muted,TextFormatFlags.Left|TextFormatFlags.EndEllipsis|TextFormatFlags.NoPrefix);
         if(note!="")TextRenderer.DrawText(g,note,NoteFont,new Rectangle(r.Right-noteSize.Width-(int)(16*k),r.Top,noteSize.Width,r.Height),Theme.Muted,TextFormatFlags.VerticalCenter|TextFormatFlags.Left);
     }
-    void Busy(bool value){busy=value;refresh.Enabled=browse.Enabled=nodes.Enabled=!value;var n=nodes.SelectedItem as Item;test.Enabled=!value&&n!=null&&n.supported;apply.Enabled=!value&&token!="";}
-    async Task LoadNodes(string selectedFile){
-        token="";Busy(true);result.Text="读取本地配置…";
+    void Busy(bool value){busy=value;refresh.Enabled=browse.Enabled=update.Enabled=nodes.Enabled=!value;var n=nodes.SelectedItem as Item;test.Enabled=!value&&n!=null&&n.supported;apply.Enabled=!value&&token!="";}
+    async Task<bool> LoadNodes(string selectedFile){
+        bool ok=true;token="";Busy(true);result.Text="读取本地配置…";
         try{var c=await command("list",new{file=selectedFile});file=Convert.ToString(c["file"]);digest=Convert.ToString(c["digest"]);source.Text=file;nodes.Items.Clear();
             foreach(Dictionary<string,object> n in (IEnumerable)c["nodes"])nodes.Items.Add(new Item{name=Convert.ToString(n["name"]),type=Convert.ToString(n["type"]),server=Convert.ToString(n["server"]),port=Convert.ToInt32(n["port"]),supported=Convert.ToBoolean(n["supported"]),reason=Convert.ToString(n["reason"])});
             // Never preselect the main Clash selector or silently save its temporary node.
             result.Text="已读取 "+nodes.Items.Count+" 个真实节点。请选择 Claude 专用固定节点。\n来源："+Convert.ToString(c["source"]);
-        }catch(Exception e){nodes.Items.Clear();result.Text=e.Message;}finally{Busy(false);loaded=true;}
+        }catch(Exception e){ok=false;nodes.Items.Clear();result.Text=e.Message;}finally{Busy(false);loaded=true;}
+        return ok;
+    }
+    // Downloads the subscription Clash already points at into guard-runtime\sources; never switches the fixed node.
+    async Task FetchLatest(){
+        Busy(true);result.Text="正在从订阅获取最新节点…";
+        try{var r=await command("fetch",new Dictionary<string,object>());
+            if(await LoadNodes(Convert.ToString(r["file"])))
+                result.Text="已获取最新订阅（"+Convert.ToString(r["fetchedFrom"])+"）。\n来源："+Convert.ToString(r["source"])+"\n共 "+nodes.Items.Count+" 个节点；请选择后测试，固定节点不会自动切换。";
+        }catch(Exception e){result.Text="获取最新订阅失败，未修改固定节点。\n"+e.Message;}
+        finally{Busy(false);}
     }
     async Task TestNode(){
         var n=(Item)nodes.SelectedItem;
