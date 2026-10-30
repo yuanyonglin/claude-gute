@@ -45,8 +45,15 @@ function selected(file,name,digest){
   const n=doc.proxies.find(n=>n.name===name);if(!n)throw Error('指定节点已不存在');validateNode(n);
   return {catalog:c,node:n};
 }
-// Read the subscription URL that Clash already points at, then save the downloaded copy under
-// guard-runtime/sources. Clash profile files and the Clash API are only read, never written.
+// Sources, in order: the URL in the request, an address saved in guard-runtime/subscription.url,
+// then the subscription Clash already points at. Clash profile files and the Clash API are only
+// read, never written; downloads land in guard-runtime/sources.
+function savedSubscriptionUrl(){
+  const file=path.join(run,'subscription.url');
+  if(!fs.existsSync(file))return null;
+  const url=fs.readFileSync(file,'utf8').trim();
+  return url?{url,uid:'native',name:'原生订阅'}:null;
+}
 function subscriptionSource(base=clashVergeDir()){
   let manifest;try{manifest=yaml.parse(fs.readFileSync(path.join(base,'profiles.yaml'),'utf8'));}catch{throw Error('无法读取 Clash 配置索引，拿不到订阅地址');}
   const item=manifest.items?.find(x=>x.uid===manifest.current);
@@ -64,17 +71,115 @@ async function download(url,timeoutMs){
     throw Error('订阅下载失败：'+e.message);
   }finally{clearTimeout(timer);}
 }
+// ---- native share links (ss/vless/vmess/trojan) -> Clash proxy objects ----
+function b64Text(s){
+  const clean=String(s).trim().replace(/-/g,'+').replace(/_/g,'/');
+  return Buffer.from(clean+'='.repeat((4-clean.length%4)%4),'base64').toString('utf8');
+}
+function params(q){
+  const out={};
+  for(const kv of String(q||'').split('&')){
+    if(!kv)continue;
+    const i=kv.indexOf('='),k=i<0?kv:kv.slice(0,i),v=i<0?'':kv.slice(i+1);
+    try{out[decodeURIComponent(k)]=decodeURIComponent(v);}catch{out[k]=v;}
+  }
+  return out;
+}
+function splitHostPort(s){
+  const m=String(s).match(/^(\[[0-9a-fA-F:]+\]|[^:]+):(\d{1,5})$/);
+  if(!m)throw Error('地址格式不对');
+  return {server:m[1].replace(/^\[|\]$/g,''),port:Number(m[2])};
+}
+function shareProxy(link){
+  const hash=link.indexOf('#');
+  const name=hash>=0?decodeURIComponent(link.slice(hash+1)):'';
+  const body=hash>=0?link.slice(0,hash):link;
+  const scheme=body.slice(0,body.indexOf('://')).toLowerCase();
+  const rest=body.slice(body.indexOf('://')+3);
+  if(scheme==='ss'){
+    const at=rest.lastIndexOf('@');
+    const method=params(rest.split('?')[1]||'');
+    if(at>=0){
+      const user=b64Text(rest.slice(0,at)),hp=splitHostPort(rest.slice(at+1).split('?')[0]);
+      const i=user.indexOf(':');
+      return {name:name||hp.server+':'+hp.port,type:'ss',server:hp.server,port:hp.port,cipher:user.slice(0,i),password:user.slice(i+1),udp:true};
+    }
+    const dec=b64Text(rest.split('?')[0]);
+    const m=dec.match(/^(.+?):(.*)@(\[[0-9a-fA-F:]+\]|[^:]+):(\d+)$/);
+    if(!m)throw Error('Shadowsocks 链接无法解析');
+    return {name:name||m[3]+':'+m[4],type:'ss',server:m[3].replace(/^\[|\]$/g,''),port:Number(m[4]),cipher:m[1],password:m[2],udp:true};
+  }
+  if(scheme==='vless'||scheme==='trojan'){
+    const at=rest.lastIndexOf('@');
+    if(at<0)throw Error('缺少节点地址');
+    const id=decodeURIComponent(rest.slice(0,at));
+    const tail=rest.slice(at+1);
+    const qi=tail.indexOf('?');
+    const hp=splitHostPort(qi<0?tail:tail.slice(0,qi));
+    const q=params(qi<0?'':tail.slice(qi+1));
+    const security=(q.security||'').toLowerCase();
+    const net=(q.type||q.network||'tcp').toLowerCase();
+    const proxy=scheme==='vless'
+      ?{name:name||hp.server+':'+hp.port,type:'vless',server:hp.server,port:hp.port,uuid:id,udp:true}
+      :{name:name||hp.server+':'+hp.port,type:'trojan',server:hp.server,port:hp.port,password:id,udp:true};
+    if(proxy.type==='vless'&&q.flow)proxy.flow=q.flow;
+    proxy.network=net==='raw'?'tcp':net;
+    if(security==='tls'||security==='reality'){
+      proxy.tls=true;
+      if(q.sni)proxy.servername=q.sni;
+      if(q.fp)proxy['client-fingerprint']=q.fp;
+      else if(security==='reality')proxy['client-fingerprint']='chrome';
+      if(security==='reality'){
+        if(!q.pbk||!q.sid)throw Error('REALITY 链接缺少 pbk/sid');
+        proxy['reality-opts']={'public-key':q.pbk,'short-id':q.sid};
+      }
+      if(q.alpn)proxy.alpn=String(q.alpn).split(',');
+      if(q.insecure==='1'||q.allowInsecure==='1')proxy['skip-cert-verify']=true;
+    }
+    if(proxy.network==='ws')proxy['ws-opts']={path:q.path||'/',headers:q.host?{Host:q.host}:{}};
+    if(proxy.network==='grpc')proxy['grpc-opts']={'grpc-service-name':q.serviceName||''};
+    return proxy;
+  }
+  if(scheme==='vmess'){
+    const v=JSON.parse(b64Text(rest));
+    const proxy={name:name||v.ps||(v.add+':'+v.port),type:'vmess',server:String(v.add),port:Number(v.port),uuid:String(v.id),alterId:Number(v.aid||0),cipher:v.scy||'auto',udp:true};
+    const net=String(v.net||'tcp').toLowerCase();
+    proxy.network=net==='raw'?'tcp':net;
+    if(String(v.tls||'')==='tls'){proxy.tls=true;if(v.sni)proxy.servername=v.sni;if(v.fp)proxy['client-fingerprint']=v.fp;}
+    if(net==='ws')proxy['ws-opts']={path:v.path||'/',headers:v.host?{Host:v.host}:{}};
+    if(net==='grpc')proxy['grpc-opts']={'grpc-service-name':v.path||''};
+    return proxy;
+  }
+  return null;
+}
+// Accepts a base64 body of one-share-per-line links and returns Clash proxy objects.
+function parseShareLinks(text){
+  const decoded=b64Text(String(text).replace(/\s+/g,''));
+  if(!decoded.includes('://'))throw Error('订阅内容既不是 Clash YAML，也不是 base64 链接列表');
+  const proxies=[],seen=new Set();
+  for(const line of decoded.split(/\r?\n/)){
+    const l=line.trim();
+    if(!/^(ss|vless|vmess|trojan):\/\//i.test(l))continue;
+    let p=null;try{p=shareProxy(l);}catch{p=null;}
+    if(!p||seen.has(p.name))continue;
+    seen.add(p.name);proxies.push(p);
+  }
+  if(!proxies.length)throw Error('订阅里没有解析出可用节点');
+  return proxies;
+}
 async function fetchCatalog(request){
   const p=read(policyFile);
-  const target=request?.url?{url:String(request.url),uid:'custom',name:'自定义订阅'}:subscriptionSource();
+  const target=request?.url?{url:String(request.url),uid:'custom',name:'自定义订阅'}:(savedSubscriptionUrl()||subscriptionSource());
   const text=await download(target.url,p.timeoutMs||18000);
-  let doc;try{doc=yaml.parse(text);}catch{throw Error('订阅内容不是有效的 YAML');}
-  if(!Array.isArray(doc?.proxies))throw Error('订阅不是 Clash 内联节点格式，需要返回 Clash YAML 的地址');
+  let doc=null;try{doc=yaml.parse(text);}catch{}
+  let yamlText,format;
+  if(Array.isArray(doc?.proxies)){yamlText=text;format='clash';}
+  else{yamlText=yaml.stringify({proxies:parseShareLinks(text)});format='native';}
   const folder=path.join(run,'sources');fs.mkdirSync(folder,{recursive:true});
-  const file=path.join(folder,target.uid.replace(/[^A-Za-z0-9_-]/g,'_')+'.yaml');
-  const temp=file+'.'+crypto.randomBytes(6).toString('hex')+'.tmp';fs.writeFileSync(temp,text);fs.renameSync(temp,file);
+  const file=path.join(folder,String(target.uid).replace(/[^A-Za-z0-9_-]/g,'_')+'.yaml');
+  const temp=file+'.'+crypto.randomBytes(6).toString('hex')+'.tmp';fs.writeFileSync(temp,yamlText);fs.renameSync(temp,file);
   const c=catalog(file);
-  return {ok:true,file:c.file,digest:c.digest,source:target.name+'（刚更新）',nodes:c.nodes,fetchedFrom:new URL(target.url).host,fetchedAt:new Date().toISOString()};
+  return {ok:true,file:c.file,digest:c.digest,source:target.name+'（刚更新）',nodes:c.nodes,format,fetchedFrom:new URL(target.url).host,fetchedAt:new Date().toISOString()};
 }
 function config(n,p,port){return {
   mode:'rule','log-level':'silent',ipv6:false,'allow-lan':false,'bind-address':'127.0.0.1',
@@ -169,7 +274,7 @@ async function apply(request){
     throw Error(e.message+(changed?'；配置事务未完成，保持锁定。备份：'+backup:'；未修改固定节点'));
   }finally{if(fd!==undefined){fs.closeSync(fd);fs.unlinkSync(lock);}}
 }
-module.exports={catalog,validateNode,selected,config,prepare,ticket,apply,isolatedProbe,pruneTickets,subscriptionSource,fetchCatalog};
+module.exports={catalog,validateNode,selected,config,prepare,ticket,apply,isolatedProbe,pruneTickets,subscriptionSource,savedSubscriptionUrl,fetchCatalog,parseShareLinks,shareProxy};
 if(require.main===module)(async()=>{
   let input='';for await(const chunk of process.stdin){input+=chunk;if(input.length>32768)throw Error('请求过大');}
   const r=input.trim()?JSON.parse(input):{};let result;

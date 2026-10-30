@@ -43,6 +43,8 @@ Claude Code / 桌面版
 
 主界面「更换节点」：读取 Clash 当前订阅（或自选 YAML），先隔离测试，再确认保存。保存后保持锁定，需要手动「复检并恢复」。目前只支持服务器是 IPv4 地址的 ss / vless / vmess / trojan 节点。
 
+「获取最新订阅」按以下顺序取地址：先看 `guard-runtime\subscription.url`（一行地址，把机场的**原始订阅**写进去即可），没有再用 Clash 当前订阅。下载内容既可以是 Clash YAML，也可以是机场原生的 base64 分享链接列表（`ss://` / `vless://` / `vmess://` / `trojan://`），后者会被解析成 Clash 节点写进 `guard-runtime\sources\`。这样不再依赖第三方订阅转换器——转换器被运营商劫持时也能换节点。
+
 ## IP 历史与警告
 
 - 「固定出口」卡片底部显示近 24 小时 / 7 天的变化次数，点「IP 历史」查看完整记录。
